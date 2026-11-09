@@ -1,18 +1,17 @@
-
 {
-  "name": "KING-MD-ENGINE",
-  "version": "8.0.0",
-  "description": "up",
-  "main": "index.js",
-  "type": "commonjs",
-  "scripts": {
-    "start": "concurrently --kill-others \"node .\" \"node pairing-api.js\""
-  },
-  "keywords": [
-    "whiskeysockets",
-    "multi-device"
-  ],
-  "author": "",
+    "name": "EMMYHENZ",
+    "version": "8.0.0",
+    "description": "up",
+    "main": "index.js",
+    "type": "commonjs",
+    "scripts": {
+        "start": "node ."
+    },
+    "keywords": [
+        "whiskeysockets",
+        "multi-device"
+    ],
+      "author": "",
   "license": "ISC",
   "dependencies": {
     "@adiwajshing/keyed-db": "^0.2.4",
@@ -56,6 +55,7 @@
     "qrcode-reader": "^1.0.4",
     "qrcode-terminal": "^0.12.0",
     "request": "^2.88.2",
+    "ruhend-scraper": "^8.3.0",
     "safe-stable-stringify": "^2.5.0",
     "set-cookie": "^0.0.4",
     "sharp": "^0.32.6",
@@ -67,11 +67,6 @@
     "youtube-yts": "^2.0.0",
     "youtubedl-core": "^4.11.7",
     "yt-search": "^2.12.1",
-    "ytdl-core": "^4.11.5",
-    "lodash": "^4.17.21",
-    "concurrently": "^9.0.1"
-  },
-  "engines": {
-    "node": "20.x"
+    "ytdl-core": "^4.11.5"
   }
 }
