@@ -4,7 +4,7 @@
   "description": "KING MD WhatsApp Bot + Pairing API",
   "main": "index.js",
   "scripts": {
-    "start": "node pairing-api.js"
+    "start": "node index.js"
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.18",
     "concurrently": "^9.0.1",
