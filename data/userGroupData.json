@@ -1,0 +1,17 @@
+{
+  "users": [],
+  "groups": [],
+  "antilink": {},
+  "antibadword": {},
+  "warnings": {},
+  "sudo": [],
+  "welcome": {},
+  "goodbye": {
+    "120363419497807157@g.us": {
+      "enabled": true,
+      "message": "Goodbye {user} 👋"
+    }
+  },
+  "chatbot": {},
+  "autoReaction": true
+}
