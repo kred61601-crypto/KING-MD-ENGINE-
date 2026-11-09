@@ -1,5 +1,6 @@
-// KING MD pairing API bridge. Runs alongside the original bot process.
+// KING MD ENGINE - Pairing API only. Pair Site lives inside your App.
 const express = require('express');
+const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const pino = require('pino');
@@ -7,9 +8,10 @@ const { default: makeWASocket, useMultiFileAuthState, Browsers, DisconnectReason
 
 const app = express();
 app.set('trust proxy', 1);
+app.use(cors());
 app.use(express.json({ limit: '16kb' }));
 
-// FIXED: Render gives you PORT. Use it first.
+// FIXED: Use Render's PORT
 const PORT = Number(process.env.PORT || process.env.PAIR_API_PORT || 10000);
 const BRIDGE_KEY = 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
 const SESSION_ROOT = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
@@ -22,43 +24,7 @@ const logger = pino({ level: 'silent' });
 
 function cleanPhone(value) { return String(value || '').replace(/\D/g, ''); }
 
-// --- PAIRING PAGE (built into engine, no separate site needed) ---
-app.get('/', (_req, res) => {
-  res.send(`<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>KING MD - Pair</title>
-<style>
-body{font-family:Arial;background:#0f0f0f;color:#fff;display:flex;justify-content:center;padding:20px}
-.box{background:#1a1a1a;padding:22px;border-radius:14px;width:100%;max-width:380px;text-align:center}
-input{width:100%;padding:13px;border-radius:10px;border:none;margin:12px 0;font-size:16px;box-sizing:border-box}
-button{width:100%;padding:13px;border:none;border-radius:10px;background:#25D366;color:#000;font-weight:bold;font-size:16px;cursor:pointer}
-#out{margin-top:16px;font-size:22px;font-weight:bold;letter-spacing:2px;word-break:break-all}
-small{color:#aaa}
-</style></head><body>
-<div class="box">
-<h2>👑 KING MD</h2>
-<p>Enter your WhatsApp number with country code</p>
-<p><small>Example: 254712345678</small></p>
-<input id="phone" placeholder="2547XXXXXXXX" inputmode="numeric" />
-<button onclick="getCode()">GET PAIRING CODE</button>
-<div id="out"></div>
-<p><small>Then: WhatsApp > Linked devices > Link with phone number > Enter code</small></p>
-</div>
-<script>
-async function getCode(){
-  const phone = document.getElementById('phone').value.trim();
-  const out = document.getElementById('out');
-  out.textContent = 'Please wait...';
-  try{
-    const r = await fetch('/api/pair', {method:'POST', headers:{'Content-Type':'application/json','x-pair-bridge-key':'${BRIDGE_KEY}'}, body: JSON.stringify({phoneNumber: phone})});
-    const d = await r.json();
-    if(d.success){ out.textContent = 'YOUR CODE: ' + d.pairingCode; }
-    else { out.textContent = 'Error: ' + (d.error || 'Failed'); }
-  }catch(e){ out.textContent = 'Network error. Engine is waking up, wait 30s and try again.'; }
-}
-</script></body></html>`);
-});
-
+app.get('/', (_req, res) => res.json({ status: 'ok', service: 'KING MD Engine' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD pairing API' }));
 
 app.post('/api/pair', async (req, res) => {
