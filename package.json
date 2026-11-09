@@ -1,17 +1,22 @@
+
 {
   "name": "king-md-engine",
   "version": "1.0.0",
   "description": "KING MD WhatsApp Bot + Pairing API",
   "main": "index.js",
   "scripts": {
-    "start": "concurrently \"node index.js\" \"node pairing-api.js\""
+    "start": "concurrently --kill-others \"node index.js\" \"node pairing-api.js\""
+  },
+  "engines": {
+    "node": "20.x"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.18",
     "concurrently": "^9.0.1",
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "lodash": "^4.17.21",
+    "node-cache": "^5.1.2",
     "pino": "^9.3.2"
-  },
-  "engines": { "node": ">=18" }
+  }
 }
