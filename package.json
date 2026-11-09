@@ -9,10 +9,9 @@
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.18",
     "concurrently": "^9.0.1",
+    "cors": "^2.8.5",
     "express": "^4.19.2",
     "pino": "^9.3.2"
   },
-  "engines": {
-    "node": ">=18"
-  }
+  "engines": { "node": ">=18" }
 }
