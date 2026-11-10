@@ -1,29 +1,10 @@
-// Starts the original KING MD bot engine and the HTTP pairing bridge together.
+// Run the original KING MD bot and the dedicated pairing API as separate processes.
 const { spawn } = require('child_process');
 const path = require('path');
-const children = [];
-function start(file, label, extraEnv = {}) {
-  const child = spawn(process.execPath, [path.join(__dirname, file)], {
-    cwd: __dirname,
-    env: { ...process.env, ...extraEnv },
-    stdio: 'inherit'
-  });
-  children.push(child);
-  child.on('exit', (code, signal) => {
-    console.error(`[KING MD] ${label} exited (code=${code}, signal=${signal || 'none'}).`);
-    if (!shuttingDown) shutdown(code || 1);
-  });
-}
-let shuttingDown = false;
-function shutdown(code) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  for (const child of children) {
-    try { child.kill('SIGTERM'); } catch (_) {}
-  }
-  setTimeout(() => process.exit(code || 0), 1500).unref();
-}
-process.on('SIGINT', () => shutdown(0));
-process.on('SIGTERM', () => shutdown(0));
-start('index.js', 'Bot engine', { PORT: '10002' });
-start('pairing-server.js', 'Pairing API');
+const bot = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
+  cwd: __dirname,
+  env: { ...process.env, PORT: '10002' },
+  stdio: 'inherit'
+});
+bot.on('exit', code => { console.error('Original bot process exited with code', code); });
+require('./pairing-api');
