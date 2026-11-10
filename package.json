@@ -2,10 +2,10 @@
   "name": "king-md-engine",
   "version": "1.0.1",
   "description": "up",
-  "main": "bridge.js",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node bridge.js"
+    "start": "node index.js"
   },
   "keywords": [
     "whiskeysockets",
