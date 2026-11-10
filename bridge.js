@@ -10,6 +10,9 @@ const crypto = require('crypto');
 const pino = require('pino');
 const baileys = require('@whiskeysockets/baileys');
 
+// The gateway owns the paired socket; main.js owns the original bot commands.
+const { handleMessages, handleGroupParticipantUpdate } = require('./main');
+
 const makeWASocket = baileys.default || baileys.makeWASocket;
 const useMultiFileAuthState = baileys.useMultiFileAuthState;
 const DisconnectReason = baileys.DisconnectReason || { loggedOut: 401 };
@@ -81,19 +84,28 @@ async function startSocket(phone, opts = {}) {
   sock.ev.on('creds.update', () => {
     auth.saveCreds().catch(error => console.error('[KING MD] Could not save WhatsApp credentials:', error.message));
   });
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify' || !Array.isArray(messages)) return;
+  // Send incoming messages to the original KING MD command dispatcher.
+  // Do not filter by prefix: the dispatcher also handles media and automations.
+  sock.public = true;
+  sock.ev.on('messages.upsert', async chatUpdate => {
+    const { messages, type } = chatUpdate || {};
+    if (!Array.isArray(messages) || type !== 'notify') return;
     for (const message of messages) {
-      if (!message || !message.message || message.key.fromMe || !message.key.remoteJid) continue;
-      const payload = message.message;
-      const text = String(payload.conversation || payload.extendedTextMessage?.text || payload.imageMessage?.caption || payload.videoMessage?.caption || '').trim();
-      if (!text.startsWith('.')) continue;
-      const command = text.slice(1).split(/\s+/)[0].toLowerCase();
-      let reply = '';
-      if (command === 'ping') reply = 'Pong! 👑 KING MD is online.';
-      else if (command === 'alive') reply = '👑 KING MD is connected and running.';
-      else if (command === 'menu' || command === 'help') reply = '👑 *KING MD BOT*\n\n.ping — Check response\n.alive — Check connection\n.menu — Show this menu\n\nMore commands can be enabled when the original command handlers are integrated.';
-      if (reply) { try { await sock.sendMessage(message.key.remoteJid, { text: reply }, { quoted: message }); } catch (error) { console.warn('[KING MD] Command reply failed:', error.message); } }
+      if (!message || !message.message || !message.key || !message.key.remoteJid) continue;
+      try {
+        await handleMessages(sock, message, chatUpdate);
+      } catch (error) {
+        console.error('[KING MD] Original command handler failed:', error && error.stack || error);
+      }
+    }
+  });
+
+  // Keep the original group welcome/admin event handlers active on gateway sockets.
+  sock.ev.on('group-participants.update', async update => {
+    try {
+      await handleGroupParticipantUpdate(sock, update);
+    } catch (error) {
+      console.error('[KING MD] Group participant handler failed:', error && error.stack || error);
     }
   });
   sock.ev.on('connection.update', update => {
