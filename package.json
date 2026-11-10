@@ -1,17 +1,17 @@
 {
-    "name": "EMMYHENZ",
-    "version": "8.0.0",
-    "description": "up",
-    "main": "index.js",
-    "type": "commonjs",
-    "scripts": {
-        "start": "node ."
-    },
-    "keywords": [
-        "whiskeysockets",
-        "multi-device"
-    ],
-      "author": "",
+  "name": "EMMYHENZ",
+  "version": "8.0.0",
+  "description": "up",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node launcher.js"
+  },
+  "keywords": [
+    "whiskeysockets",
+    "multi-device"
+  ],
+  "author": "",
   "license": "ISC",
   "dependencies": {
     "@adiwajshing/keyed-db": "^0.2.4",
@@ -55,7 +55,6 @@
     "qrcode-reader": "^1.0.4",
     "qrcode-terminal": "^0.12.0",
     "request": "^2.88.2",
-    "ruhend-scraper": "^8.3.0",
     "safe-stable-stringify": "^2.5.0",
     "set-cookie": "^0.0.4",
     "sharp": "^0.32.6",

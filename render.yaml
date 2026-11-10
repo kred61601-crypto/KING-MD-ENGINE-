@@ -15,3 +15,5 @@ services:
         value: 20
       - key: PAIR_SESSION_DIR
         value: /var/data/pair_sessions
+      - key: PAIR_BRIDGE_KEY
+        sync: false
