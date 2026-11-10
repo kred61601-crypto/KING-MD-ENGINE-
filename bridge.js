@@ -15,6 +15,16 @@ const useMultiFileAuthState = baileys.useMultiFileAuthState;
 const DisconnectReason = baileys.DisconnectReason || { loggedOut: 401 };
 const Browsers = baileys.Browsers;
 
+// WhatsApp rejects stale Web protocol versions with HTTP 405 during the
+// initial registration handshake. Keep this override configurable in Render.
+// Default is the current stable WhatsApp Web version observed 2026-11-10.
+const WA_WEB_VERSION = String(process.env.WA_WEB_VERSION || '2.3000.1053060988')
+  .split('.')
+  .map(part => Number(part));
+if (WA_WEB_VERSION.length !== 3 || WA_WEB_VERSION.some(n => !Number.isInteger(n) || n < 0)) {
+  throw new Error('WA_WEB_VERSION must look like 2.3000.1053060988');
+}
+
 if (typeof makeWASocket !== 'function' || typeof useMultiFileAuthState !== 'function') {
   throw new Error('Baileys does not expose makeWASocket/useMultiFileAuthState. Check the Baileys dependency version.');
 }
@@ -55,6 +65,7 @@ async function startSocket(phone, opts = {}) {
   const auth = await useMultiFileAuthState(dir);
   const sock = makeWASocket({
     auth: auth.state,
+    version: WA_WEB_VERSION,
     logger,
     printQRInTerminal: false,
     browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'],
@@ -101,6 +112,14 @@ async function startSocket(phone, opts = {}) {
       const statusCode = disconnectError && disconnectError.output && disconnectError.output.statusCode;
       entry.loggedOut = statusCode === DisconnectReason.loggedOut;
       console.error('[KING MD] WhatsApp connection CLOSED:', phone, 'status=', statusCode || 'unknown', 'reason=', disconnectError && disconnectError.message || 'not supplied');
+      // A 405 is a protocol/version rejection, not a transient network drop.
+      // Do not hammer WhatsApp with identical reconnect attempts. Update WA_WEB_VERSION
+      // in Render before trying again.
+      if (statusCode === 405) {
+        entry.loggedOut = false;
+        console.error('[KING MD] HTTP 405: WhatsApp rejected the Web protocol version', WA_WEB_VERSION.join('.'), '. Set WA_WEB_VERSION to a currently accepted version and redeploy.');
+        return;
+      }
       if (!entry.loggedOut && sessions.get(phone) === entry && !entry.reconnectTimer) {
         // Baileys can close with restartRequired (515) during device linking. Re-open
         // the socket using the same auth directory so the completed pairing can finish.
