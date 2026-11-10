@@ -67,7 +67,9 @@ async function startSocket(phone, opts = {}) {
   });
   const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, updatedAt: Date.now() };
   sessions.set(phone, entry);
-  sock.ev.on('creds.update', auth.saveCreds);
+  sock.ev.on('creds.update', () => {
+    auth.saveCreds().catch(error => console.error('[KING MD] Could not save WhatsApp credentials:', error.message));
+  });
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify' || !Array.isArray(messages)) return;
     for (const message of messages) {
@@ -85,21 +87,43 @@ async function startSocket(phone, opts = {}) {
   });
   sock.ev.on('connection.update', update => {
     entry.updatedAt = Date.now();
+    if (update.connection === 'connecting') {
+      console.log('[KING MD] WhatsApp socket connecting:', phone);
+    }
     if (update.connection === 'open') {
       entry.connected = true; entry.pairing = false; entry.code = null; entry.loggedOut = false;
-      console.log('[KING MD] WhatsApp connected:', phone);
+      entry.reconnectAttempts = 0;
+      console.log('[KING MD] WhatsApp connection OPEN:', phone);
     }
     if (update.connection === 'close') {
       entry.connected = false; entry.pairing = false;
-      const statusCode = update.lastDisconnect && update.lastDisconnect.error && update.lastDisconnect.error.output && update.lastDisconnect.error.output.statusCode;
+      const disconnectError = update.lastDisconnect && update.lastDisconnect.error;
+      const statusCode = disconnectError && disconnectError.output && disconnectError.output.statusCode;
       entry.loggedOut = statusCode === DisconnectReason.loggedOut;
-      if (entry.loggedOut) console.warn('[KING MD] WhatsApp logged out:', phone);
-      else console.warn('[KING MD] WhatsApp connection closed:', phone, statusCode || 'unknown');
+      console.error('[KING MD] WhatsApp connection CLOSED:', phone, 'status=', statusCode || 'unknown', 'reason=', disconnectError && disconnectError.message || 'not supplied');
+      if (!entry.loggedOut && sessions.get(phone) === entry && !entry.reconnectTimer) {
+        // Baileys can close with restartRequired (515) during device linking. Re-open
+        // the socket using the same auth directory so the completed pairing can finish.
+        const attempt = (entry.reconnectAttempts || 0) + 1;
+        entry.reconnectAttempts = attempt;
+        const delay = Math.min(15000, 1500 * attempt);
+        console.warn('[KING MD] Reconnecting WhatsApp socket in', delay, 'ms; attempt', attempt);
+        entry.reconnectTimer = setTimeout(async () => {
+          entry.reconnectTimer = null;
+          if (sessions.get(phone) !== entry) return;
+          try {
+            await startSocket(phone, { requestCode: false });
+          } catch (error) {
+            console.error('[KING MD] WhatsApp reconnect failed:', phone, error.message);
+          }
+        }, delay);
+        if (entry.reconnectTimer.unref) entry.reconnectTimer.unref();
+      }
     }
   });
   if (opts.requestCode && !auth.state.creds.registered) {
-    // A short delay lets the socket initialise before requesting a pairing code.
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    // Allow the WebSocket handshake to initialise before requesting a pairing code.
+    await new Promise(resolve => setTimeout(resolve, 3000));
     const code = await sock.requestPairingCode(phone);
     entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, '');
     entry.pairing = true;
@@ -148,7 +172,10 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
 app.get('/api/status', bridgeAuth, (req, res) => {
   const numbers = String(req.query.numbers || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)).slice(0, 30);
   const bots = {};
-  numbers.forEach(n => { bots[n] = stateFor(n); });
+  numbers.forEach(n => {
+    const session = sessions.get(n);
+    bots[n] = { state: stateFor(n), connected: Boolean(session && session.connected), updatedAt: session ? session.updatedAt : null };
+  });
   res.json({ success: true, bots });
 });
 
@@ -156,6 +183,7 @@ app.delete('/api/session/:phone', bridgeAuth, async (req, res) => {
   const phone = phoneDigits(req.params.phone);
   if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Invalid phone number.' });
   const current = sessions.get(phone);
+  if (current && current.reconnectTimer) clearTimeout(current.reconnectTimer);
   if (current && current.sock) { try { await current.sock.logout(); } catch (_) { try { current.sock.end(undefined); } catch (_) {} } }
   sessions.delete(phone);
   await fs.promises.rm(sessionPath(phone), { recursive: true, force: true });
