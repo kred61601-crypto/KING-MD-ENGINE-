@@ -10,3 +10,8 @@ services:
       name: king-md-pair-sessions
       mountPath: /var/data
       sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PAIR_SESSION_DIR
+        value: /var/data/pair_sessions

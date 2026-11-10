@@ -1,0 +1,222 @@
+'use strict';
+
+// KING MD pairing gateway. This service owns the Baileys sockets used by the app.
+// Auth state is stored per WhatsApp number so a restart does not silently forget links.
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const pino = require('pino');
+const baileys = require('@whiskeysockets/baileys');
+
+const makeWASocket = baileys.default || baileys.makeWASocket;
+const useMultiFileAuthState = baileys.useMultiFileAuthState;
+const DisconnectReason = baileys.DisconnectReason || { loggedOut: 401 };
+const Browsers = baileys.Browsers;
+
+if (typeof makeWASocket !== 'function' || typeof useMultiFileAuthState !== 'function') {
+  throw new Error('Baileys does not expose makeWASocket/useMultiFileAuthState. Check the Baileys dependency version.');
+}
+
+const app = express();
+app.disable('x-powered-by');
+app.use(cors());
+app.use(express.json({ limit: '256kb' }));
+const PORT = Number(process.env.PORT || 10000);
+const SESSION_DIR = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
+// Must match the private server-to-server key in the KING MD V1 app server.
+const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
+const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
+fs.mkdirSync(SESSION_DIR, { recursive: true });
+
+const sessions = new Map();
+const pending = new Map();
+const phoneDigits = value => String(value || '').replace(/\D/g, '');
+const sessionPath = phone => path.join(SESSION_DIR, crypto.createHash('sha256').update(phone).digest('hex'));
+const stateFor = phone => {
+  const s = sessions.get(phone);
+  if (!s) return 'offline';
+  if (s.connected) return 'online';
+  if (s.pairing) return 'pairing';
+  return s.loggedOut ? 'offline' : 'connecting';
+};
+
+function bridgeAuth(req, res, next) {
+  if (!BRIDGE_KEY || req.get('x-pair-bridge-key') !== BRIDGE_KEY) {
+    return res.status(401).json({ success: false, error: 'Unauthorized engine request.' });
+  }
+  next();
+}
+
+async function startSocket(phone, opts = {}) {
+  const dir = sessionPath(phone);
+  fs.mkdirSync(dir, { recursive: true });
+  const auth = await useMultiFileAuthState(dir);
+  const sock = makeWASocket({
+    auth: auth.state,
+    logger,
+    printQRInTerminal: false,
+    browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'],
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: false,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 25000
+  });
+  const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, updatedAt: Date.now() };
+  sessions.set(phone, entry);
+  sock.ev.on('creds.update', auth.saveCreds);
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify' || !Array.isArray(messages)) return;
+    for (const message of messages) {
+      if (!message || !message.message || message.key.fromMe || !message.key.remoteJid) continue;
+      const payload = message.message;
+      const text = String(payload.conversation || payload.extendedTextMessage?.text || payload.imageMessage?.caption || payload.videoMessage?.caption || '').trim();
+      if (!text.startsWith('.')) continue;
+      const command = text.slice(1).split(/\s+/)[0].toLowerCase();
+      let reply = '';
+      if (command === 'ping') reply = 'Pong! 👑 KING MD is online.';
+      else if (command === 'alive') reply = '👑 KING MD is connected and running.';
+      else if (command === 'menu' || command === 'help') reply = '👑 *KING MD BOT*\n\n.ping — Check response\n.alive — Check connection\n.menu — Show this menu\n\nMore commands can be enabled when the original command handlers are integrated.';
+      if (reply) { try { await sock.sendMessage(message.key.remoteJid, { text: reply }, { quoted: message }); } catch (error) { console.warn('[KING MD] Command reply failed:', error.message); } }
+    }
+  });
+  sock.ev.on('connection.update', update => {
+    entry.updatedAt = Date.now();
+    if (update.connection === 'open') {
+      entry.connected = true; entry.pairing = false; entry.code = null; entry.loggedOut = false;
+      console.log('[KING MD] WhatsApp connected:', phone);
+    }
+    if (update.connection === 'close') {
+      entry.connected = false; entry.pairing = false;
+      const statusCode = update.lastDisconnect && update.lastDisconnect.error && update.lastDisconnect.error.output && update.lastDisconnect.error.output.statusCode;
+      entry.loggedOut = statusCode === DisconnectReason.loggedOut;
+      if (entry.loggedOut) console.warn('[KING MD] WhatsApp logged out:', phone);
+      else console.warn('[KING MD] WhatsApp connection closed:', phone, statusCode || 'unknown');
+    }
+  });
+  if (opts.requestCode && !auth.state.creds.registered) {
+    // A short delay lets the socket initialise before requesting a pairing code.
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    const code = await sock.requestPairingCode(phone);
+    entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, '');
+    entry.pairing = true;
+    entry.updatedAt = Date.now();
+    return { entry, code: entry.code };
+  }
+  if (auth.state.creds.registered) entry.connected = false;
+  return { entry, code: null };
+}
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD WhatsApp Pairing Engine', activeSessions: sessions.size }));
+app.get('/api/health', (_req, res) => res.json({ success: true, service: 'KING MD WhatsApp Pairing Engine' }));
+app.get('/sessions', (_req, res) => res.json({ success: true, total: sessions.size, serverStats: { detectedServers: 1, serversLeft: 0 }, bots: [...sessions.values()].map(s => ({ number: s.phone, state: stateFor(s.phone) })) }));
+
+app.post('/api/pair', bridgeAuth, async (req, res) => {
+  const phone = phoneDigits(req.body && req.body.phoneNumber);
+  if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Enter a valid WhatsApp number with country code.' });
+  if (pending.has(phone)) {
+    try {
+      const result = await pending.get(phone);
+      return res.json({ success: true, pairingCode: result.code, state: stateFor(phone) });
+    } catch (e) { return res.status(502).json({ success: false, error: e.message || 'Could not create pairing code.' }); }
+  }
+  const existing = sessions.get(phone);
+  if (existing && existing.connected) return res.status(409).json({ success: false, code: 'ALREADY_CONNECTED', error: 'This WhatsApp number is already connected.' });
+  const task = (async () => {
+    const current = sessions.get(phone);
+    if (current && current.pairing && current.code) return { code: current.code };
+    if (current && current.sock) { try { current.sock.end(undefined); } catch (_) {} sessions.delete(phone); }
+    const result = await startSocket(phone, { requestCode: true });
+    if (!result.code) throw new Error('WhatsApp did not return a pairing code. Please retry.');
+    return { code: result.code };
+  })();
+  pending.set(phone, task);
+  try {
+    const result = await task;
+    return res.json({ success: true, pairingCode: result.code, state: stateFor(phone) });
+  } catch (error) {
+    console.error('[KING MD] Pairing failed:', error.message);
+    const current = sessions.get(phone);
+    if (current && !current.connected) { try { current.sock.end(undefined); } catch (_) {} sessions.delete(phone); }
+    return res.status(502).json({ success: false, error: 'Could not obtain a WhatsApp pairing code: ' + (error.message || 'engine error') });
+  } finally { pending.delete(phone); }
+});
+
+app.get('/api/status', bridgeAuth, (req, res) => {
+  const numbers = String(req.query.numbers || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)).slice(0, 30);
+  const bots = {};
+  numbers.forEach(n => { bots[n] = stateFor(n); });
+  res.json({ success: true, bots });
+});
+
+app.delete('/api/session/:phone', bridgeAuth, async (req, res) => {
+  const phone = phoneDigits(req.params.phone);
+  if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+  const current = sessions.get(phone);
+  if (current && current.sock) { try { await current.sock.logout(); } catch (_) { try { current.sock.end(undefined); } catch (_) {} } }
+  sessions.delete(phone);
+  await fs.promises.rm(sessionPath(phone), { recursive: true, force: true });
+  res.json({ success: true, state: 'offline' });
+});
+
+app.post('/api/channel-react', bridgeAuth, async (req, res) => {
+  const body = req.body || {};
+  const match = String(body.link || '').match(/whatsapp\.com\/channel\/([A-Za-z0-9_-]+)\/(\d+)/i);
+  if (!match) return res.status(400).json({ success: false, error: 'Use a WhatsApp channel post link ending in its post ID.' });
+  const requested = (Array.isArray(body.phoneNumbers) ? body.phoneNumbers : []).map(phoneDigits).filter(n => sessions.has(n) && sessions.get(n).connected).slice(0, 20);
+  if (!requested.length) return res.status(409).json({ success: false, error: 'No connected bot is available. Link a WhatsApp bot first.' });
+  const emojis = body.random || !body.emoji ? ['❤️', '🔥', '👍', '😍', '💯'] : String(body.emoji).split(',').map(x => x.trim()).filter(Boolean).slice(0, 5);
+  if (!emojis.length) return res.status(400).json({ success: false, error: 'Choose at least one reaction emoji.' });
+  const amount = Math.max(1, Math.min(Number(body.amount) || 1, requested.length));
+  const outcomes = [];
+  for (let i = 0; i < amount; i++) {
+    const phone = requested[i];
+    const sock = sessions.get(phone).sock;
+    if (typeof sock.newsletterReactMessage !== 'function') {
+      outcomes.push({ phone, success: false, error: 'This Baileys build does not support channel reactions.' });
+      continue;
+    }
+    const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+    try {
+      await sock.newsletterReactMessage(match[1] + '@newsletter', match[2], emoji);
+      outcomes.push({ phone, success: true, emoji });
+    } catch (error) { outcomes.push({ phone, success: false, error: error.message || 'Reaction failed' }); }
+  }
+  const sent = outcomes.filter(x => x.success);
+  res.json({ success: sent.length > 0, reactionsSent: sent.length, emojisUsed: [...new Set(sent.map(x => x.emoji))], results: outcomes, error: sent.length ? undefined : (outcomes[0] && outcomes[0].error) || 'No reactions were sent.' });
+});
+
+async function restoreSessions() {
+  const dirs = await fs.promises.readdir(SESSION_DIR, { withFileTypes: true }).catch(() => []);
+  // Session folder names are hashes, so read the phone index written beside each auth state.
+  for (const item of dirs) {
+    if (!item.isDirectory()) continue;
+    const dir = path.join(SESSION_DIR, item.name);
+    const metaPath = path.join(dir, 'phone.json');
+    const credsPath = path.join(dir, 'creds.json');
+    try {
+      const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf8'));
+      const creds = JSON.parse(await fs.promises.readFile(credsPath, 'utf8'));
+      const phone = phoneDigits(meta.phone);
+      if (phone && creds.registered) await startSocket(phone, { requestCode: false });
+    } catch (_) { /* Ignore incomplete/old auth folders; a new pair request can recreate them. */ }
+  }
+}
+
+// Save a phone index in the auth folder so the service can restore sessions after a restart.
+const originalStartSocket = startSocket;
+startSocket = async function(phone, opts) {
+  const result = await originalStartSocket(phone, opts);
+  await fs.promises.writeFile(path.join(sessionPath(phone), 'phone.json'), JSON.stringify({ phone }), { mode: 0o600 });
+  return result;
+};
+
+restoreSessions().then(() => {
+  app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Pairing engine listening on ' + PORT));
+}).catch(error => {
+  console.error('[KING MD] Session restore warning:', error.message);
+  app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Pairing engine listening on ' + PORT));
+});

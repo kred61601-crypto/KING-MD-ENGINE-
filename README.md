@@ -1,3 +1,5 @@
+> **KING MD pairing gateway update:** the Render start command now runs `bridge.js`, a Baileys pairing/session gateway used by the KING MD V1 website. It persists each linked number under `PAIR_SESSION_DIR`, exposes `/api/pair`, `/api/status`, `/api/channel-react`, and `/health`, and includes basic `.ping`, `.alive`, and `.menu` replies. See `../REPAIR-REPORT.md` for limitations: the original obfuscated command dispatcher is retained but not yet integrated into this new gateway, and M-Pesa automatic verification still needs merchant credentials.
+
 ## ❤️‍🔥𝐄𝐌𝐌𝐘𝐇𝐄𝐍𝐙 𝐕1❤️‍🔥
 
 <p align="center">

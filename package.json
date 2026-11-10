@@ -1,11 +1,11 @@
 {
-  "name": "EMMYHENZ",
-  "version": "8.0.0",
+  "name": "king-md-engine",
+  "version": "1.0.0",
   "description": "up",
-  "main": "index.js",
+  "main": "bridge.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node launcher.js"
+    "start": "node bridge.js"
   },
   "keywords": [
     "whiskeysockets",
@@ -18,7 +18,7 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@hapi/boom": "^10.0.1",
     "@types/node": "^18.0.6",
-    "@whiskeysockets/baileys": "npm:ab-baileys@1.0.1",
+    "@whiskeysockets/baileys": "^6.7.18",
     "awesome-phonenumber": "^5.9.0",
     "node-telegram-bot-api": "^0.64.0",
     "axios": "^1.8.4",
@@ -66,6 +66,7 @@
     "youtube-yts": "^2.0.0",
     "youtubedl-core": "^4.11.7",
     "yt-search": "^2.12.1",
-    "ytdl-core": "^4.11.5"
+    "ytdl-core": "^4.11.5",
+    "cors": "^2.8.5"
   }
 }
