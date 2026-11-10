@@ -1,7 +1,8 @@
 'use strict';
 
-// KING MD pairing gateway. This service owns the Baileys sockets used by the app.
-// Auth state is stored per WhatsApp number so a restart does not silently forget links.
+// KING MD pairing gateway - FIXED for V4 App CHECKING bug
+// Fix: /api/status is now public so App can show ONLINE/OFFLINE
+// Fix: bridgeAuth accepts x-pair-bridge-key, x-api-key, Authorization
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -10,7 +11,6 @@ const crypto = require('crypto');
 const pino = require('pino');
 const baileys = require('@whiskeysockets/baileys');
 
-// The gateway owns the paired socket; main.js owns the original bot commands.
 const { handleMessages, handleGroupParticipantUpdate } = require('./main');
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
@@ -18,9 +18,6 @@ const useMultiFileAuthState = baileys.useMultiFileAuthState;
 const DisconnectReason = baileys.DisconnectReason || { loggedOut: 401 };
 const Browsers = baileys.Browsers;
 
-// WhatsApp rejects stale Web protocol versions with HTTP 405 during the
-// initial registration handshake. Keep this override configurable in Render.
-// Default is the current stable WhatsApp Web version observed 2026-11-10.
 const WA_WEB_VERSION = String(process.env.WA_WEB_VERSION || '2.3000.1053060988')
   .split('.')
   .map(part => Number(part));
@@ -39,6 +36,7 @@ app.use(express.json({ limit: '256kb' }));
 const PORT = Number(process.env.PORT || 10000);
 const SESSION_DIR = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
 // Must match the private server-to-server key in the KING MD V1 app server.
+// V4 App may send it as x-api-key or Authorization, we accept all below.
 const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -49,14 +47,25 @@ const phoneDigits = value => String(value || '').replace(/\D/g, '');
 const sessionPath = phone => path.join(SESSION_DIR, crypto.createHash('sha256').update(phone).digest('hex'));
 const stateFor = phone => {
   const s = sessions.get(phone);
-  if (!s) return 'offline';
+  if (!s) {
+    // If creds file exists on disk but not in memory yet (restart), don't lie "offline"
+    try {
+      const creds = JSON.parse(fs.readFileSync(path.join(sessionPath(phone), 'creds.json'), 'utf8'));
+      if (creds && creds.registered) return 'connecting';
+    } catch (_) {}
+    return 'offline';
+  }
   if (s.connected) return 'online';
   if (s.pairing) return 'pairing';
   return s.loggedOut ? 'offline' : 'connecting';
 };
 
+function getBridgeKeyFromReq(req) {
+  return req.get('x-pair-bridge-key') || req.get('x-bridge-key') || req.get('x-api-key') || String(req.get('authorization') || '').replace(/^Bearer\s+/i, '') || '';
+}
+
 function bridgeAuth(req, res, next) {
-  if (!BRIDGE_KEY || req.get('x-pair-bridge-key') !== BRIDGE_KEY) {
+  if (!BRIDGE_KEY || getBridgeKeyFromReq(req) !== BRIDGE_KEY) {
     return res.status(401).json({ success: false, error: 'Unauthorized engine request.' });
   }
   next();
@@ -79,13 +88,11 @@ async function startSocket(phone, opts = {}) {
     defaultQueryTimeoutMs: 60000,
     keepAliveIntervalMs: 25000
   });
-  const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, updatedAt: Date.now() };
+  const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
   sessions.set(phone, entry);
   sock.ev.on('creds.update', () => {
     auth.saveCreds().catch(error => console.error('[KING MD] Could not save WhatsApp credentials:', error.message));
   });
-  // Send incoming messages to the original KING MD command dispatcher.
-  // Do not filter by prefix: the dispatcher also handles media and automations.
   sock.public = true;
   sock.ev.on('messages.upsert', async chatUpdate => {
     const { messages, type } = chatUpdate || {};
@@ -99,8 +106,6 @@ async function startSocket(phone, opts = {}) {
       }
     }
   });
-
-  // Keep the original group welcome/admin event handlers active on gateway sockets.
   sock.ev.on('group-participants.update', async update => {
     try {
       await handleGroupParticipantUpdate(sock, update);
@@ -124,17 +129,12 @@ async function startSocket(phone, opts = {}) {
       const statusCode = disconnectError && disconnectError.output && disconnectError.output.statusCode;
       entry.loggedOut = statusCode === DisconnectReason.loggedOut;
       console.error('[KING MD] WhatsApp connection CLOSED:', phone, 'status=', statusCode || 'unknown', 'reason=', disconnectError && disconnectError.message || 'not supplied');
-      // A 405 is a protocol/version rejection, not a transient network drop.
-      // Do not hammer WhatsApp with identical reconnect attempts. Update WA_WEB_VERSION
-      // in Render before trying again.
       if (statusCode === 405) {
         entry.loggedOut = false;
         console.error('[KING MD] HTTP 405: WhatsApp rejected the Web protocol version', WA_WEB_VERSION.join('.'), '. Set WA_WEB_VERSION to a currently accepted version and redeploy.');
         return;
       }
       if (!entry.loggedOut && sessions.get(phone) === entry && !entry.reconnectTimer) {
-        // Baileys can close with restartRequired (515) during device linking. Re-open
-        // the socket using the same auth directory so the completed pairing can finish.
         const attempt = (entry.reconnectAttempts || 0) + 1;
         entry.reconnectAttempts = attempt;
         const delay = Math.min(15000, 1500 * attempt);
@@ -153,7 +153,6 @@ async function startSocket(phone, opts = {}) {
     }
   });
   if (opts.requestCode && !auth.state.creds.registered) {
-    // Allow the WebSocket handshake to initialise before requesting a pairing code.
     await new Promise(resolve => setTimeout(resolve, 3000));
     const code = await sock.requestPairingCode(phone);
     entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, '');
@@ -164,6 +163,15 @@ async function startSocket(phone, opts = {}) {
   if (auth.state.creds.registered) entry.connected = false;
   return { entry, code: null };
 }
+
+const originalStartSocket = startSocket;
+const startSocketWithIndex = async function(phone, opts) {
+  const result = await originalStartSocket(phone, opts);
+  try { await fs.promises.writeFile(path.join(sessionPath(phone), 'phone.json'), JSON.stringify({ phone }), { mode: 0o600 }); } catch (_) {}
+  return result;
+};
+// Use wrapper for all future calls
+const startSocketFinal = startSocketWithIndex;
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD WhatsApp Pairing Engine', activeSessions: sessions.size }));
 app.get('/api/health', (_req, res) => res.json({ success: true, service: 'KING MD WhatsApp Pairing Engine' }));
@@ -184,7 +192,7 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
     const current = sessions.get(phone);
     if (current && current.pairing && current.code) return { code: current.code };
     if (current && current.sock) { try { current.sock.end(undefined); } catch (_) {} sessions.delete(phone); }
-    const result = await startSocket(phone, { requestCode: true });
+    const result = await startSocketFinal(phone, { requestCode: true });
     if (!result.code) throw new Error('WhatsApp did not return a pairing code. Please retry.');
     return { code: result.code };
   })();
@@ -200,8 +208,9 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
   } finally { pending.delete(phone); }
 });
 
-app.get('/api/status', bridgeAuth, (req, res) => {
-  const numbers = String(req.query.numbers || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)).slice(0, 30);
+// FIXED: No bridgeAuth here - V4 App needs to poll this without key to stop CHECKING
+app.get('/api/status', (req, res) => {
+  const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)).slice(0, 30);
   const bots = {};
   numbers.forEach(n => {
     const session = sessions.get(n);
@@ -250,7 +259,6 @@ app.post('/api/channel-react', bridgeAuth, async (req, res) => {
 
 async function restoreSessions() {
   const dirs = await fs.promises.readdir(SESSION_DIR, { withFileTypes: true }).catch(() => []);
-  // Session folder names are hashes, so read the phone index written beside each auth state.
   for (const item of dirs) {
     if (!item.isDirectory()) continue;
     const dir = path.join(SESSION_DIR, item.name);
@@ -260,18 +268,10 @@ async function restoreSessions() {
       const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf8'));
       const creds = JSON.parse(await fs.promises.readFile(credsPath, 'utf8'));
       const phone = phoneDigits(meta.phone);
-      if (phone && creds.registered) await startSocket(phone, { requestCode: false });
-    } catch (_) { /* Ignore incomplete/old auth folders; a new pair request can recreate them. */ }
+      if (phone && creds.registered) await startSocketFinal(phone, { requestCode: false });
+    } catch (_) {}
   }
 }
-
-// Save a phone index in the auth folder so the service can restore sessions after a restart.
-const originalStartSocket = startSocket;
-startSocket = async function(phone, opts) {
-  const result = await originalStartSocket(phone, opts);
-  await fs.promises.writeFile(path.join(sessionPath(phone), 'phone.json'), JSON.stringify({ phone }), { mode: 0o600 });
-  return result;
-};
 
 restoreSessions().then(() => {
   app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Pairing engine listening on ' + PORT));
