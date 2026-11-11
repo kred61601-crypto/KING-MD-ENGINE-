@@ -163,3 +163,7 @@ Deploy EMMYHENZ-V1 to your favorite platform with one click:
 **⭐ Star this repo if you found it helpful!**
 
 </div>
+
+
+## WhatsApp Channel
+Follow KING MD updates: https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z
