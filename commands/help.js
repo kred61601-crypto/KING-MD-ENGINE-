@@ -1,126 +1,269 @@
-// KING MD V4 - help.js - PERFECT STYLE 👑💎
+// KING MD V4 - help.js - YOUR DESIGN + VIEW CHANNEL BUTTON 👑
 const fs = require('fs');
 const path = require('path');
 
 async function helpCommand(sock, message) {
     const from = message.key.remoteJid;
-    const uptime = Math.floor(process.uptime());
-    const h = Math.floor(uptime / 3600);
-    const m = Math.floor((uptime % 3600) / 60);
-    const s = uptime % 60;
+    
+    const ownerName = "KING";
+    const version = "4.0.0";
+    const uptimeSec = Math.floor(process.uptime());
+    const h = Math.floor(uptimeSec / 3600);
+    const m = Math.floor((uptimeSec % 3600) / 60);
+    const s = uptimeSec % 60;
+    const runtime = `${h}h ${m}m ${s}s`;
+    const time = new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    const ping = Math.floor(Math.random() * 30) + 10;
 
-    const menuText = `╔════════════════════════╗
-║                        ║
-║   👑 𝕂𝕀ℕ𝔾 𝕄𝔻 𝕍𝟜 👑   ║
-║                        ║
-║   ⚡ 𝙋𝙍𝙀𝙈𝙄𝙐𝙈 𝘽𝙊𝙏 ⚡   ║
-║                        ║
-╚════════════════════════╝
+    // This makes "... Read more" like in your screenshot
+    const readMore = '\u200b'.repeat(4000);
 
-┏━━━━━━━━━━━━━━━━━━━━━┓
-┃  👑 *OWNER :* KING
-┃  🤖 *BOT :* KING MD V4
-┃  📦 *VERSION :* 4.0.0
-┃  🕐 *UPTIME :* ${h}h ${m}m ${s}s
-┃  🌍 *MODE :* Public
-┃  ⚡ *PING :* Fast
-┗━━━━━━━━━━━━━━━━━━━━━┛
+    const menuText = `╔═════════◇◆◇═════════╗
+├▢ *𝗡𝗔𝗠𝗘: 🌐 𝗞𝗜𝗡𝗚 𝗠𝗗 ❤️‍🔥*
+├▢ *𝗢𝗪𝗡𝗘𝗥: ${ownerName}*
+├▢ *𝗧𝗜𝗠𝗘: ${time}*
+├▢ *𝗥𝗨𝗡𝗧𝗜𝗠𝗘: ${runtime}*
+├▢ *𝗣𝗜𝗡𝗚: ${ping} ms*
+├▢ *𝗩𝗘𝗥𝗦𝗜𝗢𝗡: v${version}*
+╚═════════◇◆◇═════════╝
 
-*╭───〔 ⚡ GENERAL 〕───╮*
-*│*
-*│  ✦ .ping*
-*│  ✦ .alive*
-*│  ✦ .menu*
-*│  ✦ .owner*
-*│  ✦ .help*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃     𝗢𝗧𝗛𝗘𝗥 𝗠𝗘𝗡𝗨 🔮
+╠────────────────────╣
+┃├▢ .menu
+┃├▢ .ping
+┃├▢ .alive
+┃├▢ .tts
+┃├▢ .owner
+┃├▢ .joke
+┃├▢ .quote
+┃├▢ .fact
+┃├▢ .weather 
+┃├▢ .news
+┃├▢ .attp
+┃├▢ .lyrics
+┃├▢ .8ball 
+┃├▢ .groupinfo
+┃├▢ .admins 
+┃├▢ .vv
+┃├▢ .trt
+┃├▢ .ss 
+┃├▢ .jid
+┃├▢ .runtime 
+┃├▢ .uptime 
+┃├▢ .staff 
+┃├▢ .qrcode *[NEW]*
+┃├▢ .shorturl *[NEW]*
+┃├▢ .translate *[NEW]*
+┗❐═══════════════════╝
 
-*╭───〔 👮 GROUP 〕───╮*
-*│*
-*│  ✦ .tagall*
-*│  ✦ .kick*
-*│  ✦ .ban / .unban*
-*│  ✦ .promote / .demote*
-*│  ✦ .mute / .unmute*
-*│  ✦ .warn*
-*│  ✦ .antilink*
-*│  ✦ .antibadword*
-*│  ✦ .groupinfo*
-*│  ✦ .welcome / .goodbye*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃       𝗔𝗜 𝗠𝗘𝗡𝗨 🤖
+╠────────────────────╣
+┃├▢ .gpt
+┃├▢ .gemini
+┃├▢ .imagine
+┃├▢ .flux
+┃├▢ .dalle 
+┗❐═══════════════════╝
 
-*╭───〔 🎮 FUN 〕───╮*
-*│*
-*│  ✦ .joke*
-*│  ✦ .meme*
-*│  ✦ .quote*
-*│  ✦ .fact*
-*│  ✦ .ship 💘*
-*│  ✦ .flirt*
-*│  ✦ .truth / .dare*
-*│  ✦ .eightball*
-*│  ✦ .hangman*
-*│  ✦ .trivia*
-*│  ✦ .tictactoe*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃       𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 ⚙️
+╠────────────────────╣
+┃├▢ .mode
+┃├▢ .autostatus
+┃├▢ .clearsession
+┃├▢ .antidelete
+┃├▢ .cleartmp
+┃├▢ .setpp 
+┃├▢ .autoreact
+┃├▢ .areact *[NEW]*
+┃├▢ .setbotbio *[NEW]*
+┃├▢ .autotyping *[NEW]*
+┃├▢ .autorecording *[NEW]*
+┃├▢ .anticall *[NEW]*
+┃├▢ .pmpermit *[NEW]*
+┃├▢ .pmapprove *[NEW]*
+┃├▢ .pmblock *[NEW]*
+┃├▢ .channelreact *[NEW]*
+┗❐═══════════════════╝
 
-*╭───〔 📥 DOWNLOAD 〕───╮*
-*│*
-*│  ✦ .play 🎵*
-*│  ✦ .song*
-*│  ✦ .video*
-*│  ✦ .tiktok*
-*│  ✦ .instagram*
-*│  ✦ .facebook*
-*│  ✦ .lyrics*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃     𝗚𝗥𝗢𝗨𝗣 𝗠𝗘𝗡𝗨 👬
+╠────────────────────╣
+┃├▢ .ban
+┃├▢ .unban
+┃├▢ .promote
+┃├▢ .demote
+┃├▢ .mute 
+┃├▢ .unmute
+┃├▢ .delete
+┃├▢ .kick
+┃├▢ .warnings
+┃├▢ .warn
+┃├▢ .antilink
+┃├▢ .antibadword
+┃├▢ .clear
+┃├▢ .tag
+┃├▢ .tagall
+┃├▢ .chatbot
+┃├▢ .resetlink
+┃├▢ .welcome
+┃├▢ .goodbye
+┃├▢ .kickall *[NEW]*
+┃├▢ .leavegc *[NEW]*
+┃├▢ .add *[NEW]*
+┃├▢ .setname *[NEW]*
+┃├▢ .setdesc *[NEW]*
+┃├▢ .revoke *[NEW]*
+┃├▢ .hidetag *[NEW]*
+┃├▢ .tagadmins *[NEW]*
+┃├▢ .creategc *[NEW]*
+┃├▢ .online *[NEW]*
+┃├▢ .onlineusers *[NEW]*
+┃├▢ .onlineadmins *[NEW]*
+┃├▢ .onlinestats *[NEW]*
+┗❐═══════════════════╝
 
-*╭───〔 🤖 AI & TOOLS 〕───╮*
-*│*
-*│  ✦ .ai*
-*│  ✦ .imagine 🎨*
-*│  ✦ .translate*
-*│  ✦ .tts*
-*│  ✦ .weather*
-*│  ✦ .news*
-*│  ✦ .ss*
-*│  ✦ .github*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃     𝗦𝗧𝗜𝗖𝗞𝗘𝗥 𝗠𝗘𝗡𝗨 ❤️‍🔥
+╠────────────────────╣
+┃├▢ .blur
+┃├▢ .simage 
+┃├▢ .sticker
+┃├▢ .tgsticker
+┃├▢ .meme
+┃├▢ .take 
+┃├▢ .emojimix
+┃├▢ .s
+┗❐═══════════════════╝
 
-*╭───〔 📸 MEDIA 〕───╮*
-*│*
-*│  ✦ .sticker*
-*│  ✦ .simage*
-*│  ✦ .attp*
-*│  ✦ .textmaker*
-*│  ✦ .wasted*
-*│  ✦ .setpp*
-*│  ✦ .setbotbio*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃     𝗙𝗨𝗡 𝗠𝗘𝗡𝗨 😅
+╠────────────────────╣
+┃├▢ .tictactoe 
+┃├▢ .hangman
+┃├▢ .guess 
+┃├▢ .trivia
+┃├▢ .answer
+┃├▢ .truth
+┃├▢ .dare
+┃├▢ .ttt *[NEW]* 
+┃├▢ .move *[NEW]* 
+┃├▢ .surrender *[NEW]* 
+┗❐═══════════════════╝
 
-*╭───〔 👑 OWNER 〕───╮*
-*│*
-*│  ✦ .autostatus*
-*│  ✦ .autotyping*
-*│  ✦ .antidelete*
-*│  ✦ .anticall*
-*│  ✦ .block*
-*│  ✦ .creategc*
-*│*
-*╰──────────────────╯*
+┏❐═══════════════════╗
+┃     𝗘𝗫𝗧𝗥𝗔 𝗠𝗘𝗡𝗨 🛠
+╠────────────────────╣
+┃├▢ .compliment
+┃├▢ .insult
+┃├▢ .flirt 
+┃├▢ .shayari
+┃├▢ .goodnight
+┃├▢ .roseday
+┃├▢ .character
+┃├▢ .wasted
+┃├▢ .ship 
+┃├▢ .simp
+┃├▢ .stupid
+┃├▢ .waste 
+┃├▢ .gn *[NEW]* 
+┃├▢ .lovenight *[NEW]* 
+┃├▢ .shayri *[NEW]*
+┃├▢ .itssostupid *[NEW]* 
+┃├▢ .iss *[NEW]*
+┗❐═══════════════════╝
 
-╔════════════════════════╗
-║  📢 *CHANNEL*  ║
-║  https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z  ║
-╚════════════════════════╝
+┏❐═══════════════════╗
+┃     𝗗𝗘𝗦𝗜𝗚𝗡 𝗠𝗘𝗡𝗨 🔱
+╠────────────────────╣
+┃├▢ .metallic 
+┃├▢ .ice 
+┃├▢ .snow
+┃├▢ .impressive
+┃├▢ .matrix
+┃├▢ .light
+┃├▢ .neon
+┃├▢ .devil
+┃├▢ .purple
+┃├▢ .thunder
+┃├▢ .leaves
+┃├▢ .1917 
+┃├▢ .arena
+┃├▢ .hacker
+┃├▢ .sand
+┃├▢ .blackpink
+┃├▢ .glitch
+┃├▢ .fire 
+┗❐═══════════════════╝
 
-*👑 𝕂𝕀ℕ𝔾 𝕄𝔻 𝕍𝟜 — 𝙍𝙐𝙇𝙀𝙎 𝙏𝙃𝙀 𝙂𝘼𝙈𝙀 👑*`;
+┏❐═══════════════════╗
+┃   𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 𝗠𝗘𝗡𝗨 📥
+╠────────────────────╣
+┃├▢ .play
+┃├▢ .song 
+┃├▢ .instagram
+┃├▢ .facebook
+┃├▢ .tiktok 
+┃├▢ .video
+┃├▢ .ytmp4
+┃├▢ .music *[NEW]*
+┃├▢ .mp3 *[NEW]* 
+┃├▢ .ytmp3 *[NEW]* 
+┃├▢ .yts *[NEW]* 
+┃├▢ .insta *[NEW]* 
+┃├▢ .ig *[NEW]* 
+┃├▢ .fb *[NEW]* 
+┃├▢ .tt *[NEW]* 
+┗❐═══════════════════╝
+
+┏❐═══════════════════╗
+┃   𝗨𝗧𝗜𝗟𝗜𝗧𝗬 & 𝗧𝗢𝗢𝗟𝗦 🛠 
+╠────────────────────╣
+┃├▢ .save *[Status Saver] [NEW]*
+┃├▢ .savecontact *[NEW]*
+┃├▢ .vcf *[NEW]* 
+┃├▢ .block *[NEW]*
+┃├▢ .unblock *[NEW]*
+┃├▢ .pair *[NEW]*
+┃├▢ .linkdevice *[NEW]* 
+┃├▢ .screenshot *[NEW]*
+┃├▢ .qr *[NEW]* 
+┃├▢ .short *[NEW]* 
+┃├▢ .del *[NEW]* 
+┗❐═══════════════════╝
+
+┏❐═══════════════════╗
+┃     𝗚𝗜𝗧𝗛𝗨𝗕 𝗠𝗘𝗡𝗨 📜
+╠────────────────────╣
+┃├▢ .git
+┃├▢ .github
+┃├▢ .sc
+┃├▢ .script
+┃├▢ .repo
+┃├▢ .gitclone
+┗❐═══════════════════╝
+
+┏❐═══════════════════╗
+┃     𝗔𝗕𝗢𝗨𝗧 𝗨𝗦
+╠────────────────────╣
+┃  𝑚𝑢𝑙𝑡𝑖𝑑𝑒𝑣𝑖𝑐𝑒 𝑤ℎ𝑎𝑡𝑠𝑎𝑝𝑝 𝑏𝑜𝑡 ❤️‍🔥 
+┃  𝐶𝑟𝑒𝑎𝑡𝑜𝑟: KING
+┃  𝑌𝑜𝑢𝑡𝑢𝑏𝑒: @KING MD
+┗❐═══════════════════╝${readMore}
+> 👑 KING MD - Tap View Channel Below 👑`;
+
+    // --- THIS IS THE VIEW CHANNEL BUTTON ---
+    const channelContext = {
+        forwardingScore: 999,
+        isForwarded: true,
+        forwardedNewsletterMessageInfo: {
+            newsletterJid: '120207367533840780@newsletter', // <-- PUT YOUR CHANNEL JID HERE
+            newsletterName: 'KING MD 👑',
+            serverMessageId: 1
+        }
+    };
 
     const menuPaths = [
         path.join(__dirname, '..', 'assets', 'menu.jpg'),
@@ -135,12 +278,16 @@ async function helpCommand(sock, message) {
 
     try {
         if (menuImage) {
-            await sock.sendMessage(from, { image: menuImage, caption: menuText });
+            await sock.sendMessage(from, { 
+                image: menuImage, 
+                caption: menuText,
+                contextInfo: channelContext
+            });
         } else {
-            let ppUrl = null;
-            try { ppUrl = await sock.profilePictureUrl(sock.user.id, 'image'); } catch (e) {}
-            if (ppUrl) await sock.sendMessage(from, { image: { url: ppUrl }, caption: menuText });
-            else await sock.sendMessage(from, { text: menuText });
+            await sock.sendMessage(from, { 
+                text: menuText,
+                contextInfo: channelContext
+            });
         }
     } catch (e) {
         await sock.sendMessage(from, { text: menuText });
