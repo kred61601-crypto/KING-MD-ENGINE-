@@ -1,22 +1,12 @@
-// KING MD V4 - commands/tiktok.js - FIXED FOR REAL main.js 👑
-// main.js calls: handler(sock, message, { text, args, from, channel, website, settings, config, axios, fetch })
+// KING MD V4 - commands/tiktok.js - FIXED - NO ruhend, NO lib/api 👑
+// main.js calls: handler(sock, message, { text, args, from, channel, website, config, axios, fetch })
 const axiosLib = require('axios');
-
-// ===== SAFE REQUIRES - Don't crash if lib missing =====
-function safeRequire(p) { try { return require(p); } catch (e) { console.log('[KING MD TikTok] Skip lib', p); return null; } }
-const settingsFile = safeRequire('../settings');
-const configFile = safeRequire('../config');
-const APIs = safeRequire('../lib/api');
-const waVideoLib = safeRequire('../lib/waVideo');
-const ruhend = safeRequire('ruhend-scraper');
-const ttdl = ruhend?.ttdl || null;
+const fetchLib = require('node-fetch');
 
 const processedMessages = new Set();
-
 const TT_PATTERNS = [
   /https?:\/\/(?:www\.)?tiktok\.com\//i,
-  /https?:\/\/(?:vm\.)?tiktok\.com\//i,
-  /https?:\/\/(?:vt\.)?tiktok\.com\//i,
+  /https?:\/\/(?:vm\.|vt\.)?tiktok\.com\//i,
 ];
 
 function extractUrl(text) {
@@ -24,115 +14,90 @@ function extractUrl(text) {
   return match ? match[0].replace(/[)\]>.,]+$/g, '') : '';
 }
 
-function tikTokUrlVariants(url) {
-  const variants = [url];
-  const m = String(url).match(/^(https?:\/\/(?:vt|vm)\.tiktok\.com\/)([A-Za-z0-9]+)(\/?.*)?$/i);
-  if (!m) return variants;
-  const upper = `${m[1]}${m[2].toUpperCase()}${m[3] || '/'}`;
-  const lower = `${m[1]}${m[2].toLowerCase()}${m[3] || '/'}`;
-  for (const v of [upper, lower]) {
-    if (!variants.includes(v)) variants.push(v);
-  }
-  return variants;
-}
-
 function captionFor(title, extra = {}) {
-  const bot = (extra.config?.botName || configFile?.botName || settingsFile?.botName || 'KING MD').toUpperCase();
-  const channel = extra.channel ? `\n\nChannel: ${extra.channel}` : '';
-  return title ? `*DOWNLOADED BY ${bot}* 👑\n\n📝 ${title}${channel}` : `*DOWNLOADED BY ${bot}* 👑${channel}`;
+  const bot = (extra.config?.botName || 'KING MD').toUpperCase();
+  return title ? `*DOWNLOADED BY ${bot}* 👑\n\n📝 ${title}` : `*DOWNLOADED BY ${bot}* 👑`;
 }
 
-const TT_HEADERS = {
-  Referer: 'https://www.tiktok.com/',
-  Origin: 'https://www.tiktok.com',
-  'Accept-Encoding': 'identity',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-};
-
-// ===== FALLBACK: If lib/waVideo missing, download via axios =====
-async function fetchVideoBuffer(url, axios) {
-  if (waVideoLib?.fetchWhatsAppVideo) {
-    return await waVideoLib.fetchWhatsAppVideo(url, TT_HEADERS);
+// ===== FIXED: Resolve vm.tiktok.com short link to real tiktok.com link =====
+async function resolveShortLink(url, fetch) {
+  try {
+    // vm.tiktok.com redirects to www.tiktok.com/@user/video/...
+    const res = await fetch(url, { method: 'GET', redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36' } });
+    const finalUrl = res.url || url;
+    console.log('[KING MD tiktok] Resolved:', url, '->', finalUrl);
+    return finalUrl;
+  } catch (e) {
+    console.log('[KING MD tiktok] Resolve fail, using original:', e.message);
+    return url;
   }
-  // Fallback - direct axios buffer
-  const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 120000, headers: TT_HEADERS, maxContentLength: 50 * 1024 * 1024 });
-  return Buffer.from(res.data);
 }
 
-async function scraperTikTokDownload(url) {
-  if (!ttdl) throw new Error('ruhend-scraper not installed');
-  const data = await ttdl(url);
-  const direct = data?.video_hd || data?.video || data?.video_wm || data?.hdplay || data?.play || null;
-  if (direct && /^https?:\/\//i.test(direct)) {
-    return { title: data.title || 'TikTok Video', thumbnail: data.cover || null, download: direct };
-  }
-  if (data?.data?.length) {
-    const video = data.data.find((m) => m.type === 'video' || /\.(mp4|mov|webm)$/i.test(m.url || '')) || data.data[0];
-    if (video?.url) return { title: data.title || 'TikTok Video', download: video.url };
-  }
-  throw new Error('No video URL found');
-}
-
-async function resolveTikTok(url) {
+// ===== Try 4 APIs - one will work =====
+async function tryApis(url, axios, fetch) {
   const errors = [];
 
-  // 1. Try Knight API if lib exists
-  if (APIs?.knightTikTokDownload) {
-    for (const candidate of tikTokUrlVariants(url)) {
-      try {
-        const dl = await APIs.knightTikTokDownload(candidate);
-        if (dl?.download && /^https?:\/\//i.test(dl.download)) {
-          console.log(`[KING MD tiktok] Knight OK video (${candidate})`);
-          return dl;
-        }
-        if (dl?.images?.length) {
-          console.log(`[KING MD tiktok] Knight OK slideshow (${candidate}) images=${dl.images.length}`);
-          return dl;
-        }
-      } catch (err) {
-        errors.push(`Knight: ${err?.message || err}`);
-        console.log(`[KING MD tiktok] Knight failed:`, err?.message || err);
-      }
+  // 1. TikWM - BEST, FREE, NO KEY
+  try {
+    console.log('[KING MD tiktok] Trying TikWM...');
+    const r = await axios.get('https://www.tikwm.com/api/?url=' + encodeURIComponent(url), { timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const d = r.data?.data;
+    if (d?.play) {
+      return { title: d.title || 'TikTok Video', download: d.play, cover: d.cover, images: null, music: d.music };
     }
-  } else {
-    console.log('[KING MD tiktok] lib/api missing, skipping Knight, using ttdl only');
-  }
-
-  // 2. Try ruhend ttdl
-  for (const candidate of tikTokUrlVariants(url)) {
-    try {
-      const dl = await scraperTikTokDownload(candidate);
-      if (dl?.download) {
-        console.log(`[KING MD tiktok] ttdl OK (${candidate})`);
-        return dl;
-      }
-    } catch (err) {
-      errors.push(`ttdl: ${err?.message || err}`);
-      console.log(`[KING MD tiktok] ttdl failed:`, err?.message || err);
+    if (d?.images?.length) {
+      return { title: d.title || 'TikTok Video', images: d.images, audio: d.music || null, download: null };
     }
-  }
+    errors.push('TikWM: no play url');
+  } catch (e) { errors.push('TikWM: ' + e.message); console.log('[KING MD tiktok] TikWM fail:', e.message); }
 
-  throw new Error(errors[0] || 'All TikTok sources failed');
+  // 2. TikWM backup domain
+  try {
+    console.log('[KING MD tiktok] Trying TikWM backup...');
+    const r = await axios.get('https://api.tikwm.com/api/?url=' + encodeURIComponent(url), { timeout: 30000 });
+    const d = r.data?.data;
+    if (d?.play) return { title: d.title || 'TikTok Video', download: d.play, cover: d.cover };
+    errors.push('TikWM2: no play');
+  } catch (e) { errors.push('TikWM2: ' + e.message); }
+
+  // 3. Apiziaul - SAME as your .play API, works for TikTok too
+  try {
+    console.log('[KING MD tiktok] Trying Apiziaul...');
+    const r = await axios.get('https://apiziaul.vercel.app/api/downloader/tiktok?url=' + encodeURIComponent(url), { timeout: 30000 });
+    const d = r.data;
+    const dl = d?.result?.video?.noWatermark || d?.result?.downloadUrl || d?.result?.url || d?.downloadUrl || d?.url;
+    if (dl) return { title: d?.result?.title || 'TikTok Video', download: dl };
+    errors.push('Apiziaul: no url');
+  } catch (e) { errors.push('Apiziaul: ' + e.message); console.log('[KING MD tiktok] Apiziaul fail:', e.message); }
+
+  // 4. SSSTik / TikCDN via tikwm video2
+  try {
+    console.log('[KING MD tiktok] Trying TikWM hd...');
+    const r = await axios.get('https://www.tikwm.com/api/?url=' + encodeURIComponent(url) + '&hd=1', { timeout: 30000 });
+    const d = r.data?.data;
+    if (d?.hdplay) return { title: d.title || 'TikTok Video', download: d.hdplay };
+    errors.push('TikWM HD: no hdplay');
+  } catch (e) { errors.push('TikWM HD: ' + e.message); }
+
+  throw new Error(errors.join(' | '));
 }
 
-// ===== COMMAND - FOR OUR REAL main.js 👑 =====
-// main.js calls: handler(sock, message, { text, args, from, channel, website, config, axios })
 async function tiktokCommand(sock, message, extra = {}) {
   const from = extra.from || message.key.remoteJid;
   const args = extra.args || [];
   const axios = extra.axios || axiosLib;
+  const fetch = extra.fetch || fetchLib;
 
   try {
     if (processedMessages.has(message.key.id)) return;
     processedMessages.add(message.key.id);
     setTimeout(() => processedMessages.delete(message.key.id), 5 * 60 * 1000);
 
-    // FIXED: Get URL from args OR extra.text OR message text - not just conversation
-    const fullText = args.join(' ') || extra.text || message.message?.conversation || message.message?.extendedTextMessage?.text || message.message?.imageMessage?.caption || '';
+    const fullText = args.join(' ') || extra.text || message.message?.conversation || message.message?.extendedTextMessage?.text || '';
     const url = extractUrl(fullText);
 
     if (!url) {
-      return sock.sendMessage(from, { text: `*KING MD TIKTOK* 👑\n\nPlease provide a TikTok link.\nExample: \`.tiktok https://vm.tiktok.com/...\`` }, { quoted: message });
+      return sock.sendMessage(from, { text: `*KING MD TIKTOK* 👑\n\nPlease provide a TikTok link.\nExample: \`.tiktok https://vm.tiktok.com/ZSpa9xDD4/\`` }, { quoted: message });
     }
     if (!TT_PATTERNS.some((p) => p.test(url))) {
       return sock.sendMessage(from, { text: '❌ That is not a valid TikTok link.' }, { quoted: message });
@@ -140,33 +105,48 @@ async function tiktokCommand(sock, message, extra = {}) {
 
     await sock.sendMessage(from, { react: { text: '🔄', key: message.key } }).catch(() => {});
 
-    const dl = await resolveTikTok(url);
-    let video;
+    // 1. Resolve short link
+    const realUrl = await resolveShortLink(url, fetch);
 
+    // 2. Try APIs
+    const dl = await tryApis(realUrl, axios, fetch);
+
+    // 3. Photo slideshow - send images
     if (dl.images?.length && !dl.download) {
-      if (waVideoLib?.slideshowToWhatsAppVideo) {
-        video = await waVideoLib.slideshowToWhatsAppVideo(dl.images, dl.audio || null, TT_HEADERS);
-      } else {
-        // No slideshow lib - send first image + audio note
-        await sock.sendMessage(from, { image: { url: dl.images[0] }, caption: captionFor(dl.title, extra) }, { quoted: message });
-        return;
+      for (const img of dl.images.slice(0, 5)) {
+        await sock.sendMessage(from, { image: { url: img }, caption: captionFor(dl.title, extra) }, { quoted: message });
       }
-    } else if (dl.download) {
-      video = await fetchVideoBuffer(dl.download, axios);
-    } else {
-      throw new Error('Invalid download response');
+      if (dl.audio) {
+        const audioRes = await axios.get(dl.audio, { responseType: 'arraybuffer', timeout: 60000 });
+        await sock.sendMessage(from, { audio: Buffer.from(audioRes.data), mimetype: 'audio/mpeg', fileName: 'tiktok-audio.mp3' }, { quoted: message });
+      }
+      await sock.sendMessage(from, { react: { text: '✅', key: message.key } }).catch(() => {});
+      return;
     }
+
+    if (!dl.download) throw new Error('No video URL from APIs');
+
+    // 4. Download video buffer
+    console.log('[KING MD tiktok] Downloading video:', dl.download);
+    const videoRes = await axios.get(dl.download, {
+      responseType: 'arraybuffer',
+      timeout: 120000,
+      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.tiktok.com/' },
+      maxContentLength: 50 * 1024 * 1024,
+      maxBodyLength: 50 * 1024 * 1024
+    });
+    const video = Buffer.from(videoRes.data);
+    if (!video.length) throw new Error('Empty video file');
 
     await sock.sendMessage(from, { video, mimetype: 'video/mp4', caption: captionFor(dl.title, extra) }, { quoted: message });
     await sock.sendMessage(from, { react: { text: '✅', key: message.key } }).catch(() => {});
 
   } catch (err) {
-    console.error('[KING MD tiktok]', err?.message || err);
-    await sock.sendMessage(from, { text: '❌ *KING MD* 👑\n\nFailed to download TikTok video. Try again with a different link.' }, { quoted: message }).catch(() => {});
+    console.error('[KING MD tiktok] FAILED:', err?.message || err);
+    await sock.sendMessage(from, { text: `❌ *KING MD* 👑\n\nFailed to download TikTok video.\n\nReason: ${err?.message?.slice(0, 200) || 'API down'}\nTry again with a different link.` }, { quoted: message }).catch(() => {});
   }
 }
 
-// ===== EXPORT LIKE main.js EXPECTS =====
 tiktokCommand.execute = tiktokCommand;
 tiktokCommand.handler = tiktokCommand;
 tiktokCommand.run = tiktokCommand;
