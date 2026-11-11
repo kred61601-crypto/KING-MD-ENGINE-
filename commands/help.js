@@ -1,4 +1,4 @@
-// KING MD V4 - help.js - YOUR DESIGN + VIEW CHANNEL BUTTON 👑
+// KING MD V4 - help.js - YOUR CHANNEL LINK AUTO-ADDED 👑
 const fs = require('fs');
 const path = require('path');
 
@@ -14,9 +14,15 @@ async function helpCommand(sock, message) {
     const runtime = `${h}h ${m}m ${s}s`;
     const time = new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     const ping = Math.floor(Math.random() * 30) + 10;
-
-    // This makes "... Read more" like in your screenshot
     const readMore = '\u200b'.repeat(4000);
+
+    // --- YOUR CHANNEL LINK HERE - BOT WILL AUTO GET JID ---
+    const channelInvite = '0029Vb9AwScF6sn47ClubG1Z'; // Your link: whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z
+    let channelJid = '120207367533840780@newsletter'; // fallback
+    try {
+        const meta = await sock.newsletterMetadata('invite', channelInvite);
+        if (meta && meta.id) channelJid = meta.id;
+    } catch (e) {}
 
     const menuText = `╔═════════◇◆◇═════════╗
 ├▢ *𝗡𝗔𝗠𝗘: 🌐 𝗞𝗜𝗡𝗚 𝗠𝗗 ❤️‍🔥*
@@ -254,12 +260,11 @@ async function helpCommand(sock, message) {
 ┗❐═══════════════════╝${readMore}
 > 👑 KING MD - Tap View Channel Below 👑`;
 
-    // --- THIS IS THE VIEW CHANNEL BUTTON ---
     const channelContext = {
         forwardingScore: 999,
         isForwarded: true,
         forwardedNewsletterMessageInfo: {
-            newsletterJid: '120207367533840780@newsletter', // <-- PUT YOUR CHANNEL JID HERE
+            newsletterJid: channelJid,
             newsletterName: 'KING MD 👑',
             serverMessageId: 1
         }
@@ -278,20 +283,12 @@ async function helpCommand(sock, message) {
 
     try {
         if (menuImage) {
-            await sock.sendMessage(from, { 
-                image: menuImage, 
-                caption: menuText,
-                contextInfo: channelContext
-            });
+            await sock.sendMessage(from, { image: menuImage, caption: menuText, contextInfo: channelContext });
         } else {
-            await sock.sendMessage(from, { 
-                text: menuText,
-                contextInfo: channelContext
-            });
+            await sock.sendMessage(from, { text: menuText, contextInfo: channelContext });
         }
     } catch (e) {
         await sock.sendMessage(from, { text: menuText });
     }
 }
-
 module.exports = helpCommand;
