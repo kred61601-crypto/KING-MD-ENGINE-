@@ -26,6 +26,28 @@ global.APIKeys = {
 module.exports = {
     WARN_COUNT: 3,
     APIs: global.APIs,
-    APIKeys: global.APIKeys, 
-    phoneNumber: "" // Don't Add If You Are Using Panel To Deploy
+    APIKeys: global.APIKeys,
+
+    // ===== KING MD V4 - YOUR INFO 👑 =====
+    // Your number - NO + , NO spaces
+    ownerNumbers: ["254726476468"],
+    ownerNumber: "254726476468",
+    phoneNumber: "254726476468", // For panel deploy - main.js reads this
+
+    // Your bot name
+    botName: "KING MD",
+    ownerName: "KING",
+
+    // Channel + Website - main.js reads from HERE, not hardcoded!
+    channel: "https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z",
+    channelLink: "https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z",
+    channelInvite: "0029Vb9AwScF6sn47ClubG1Z",
+    channelCode: "0029Vb9AwScF6sn47ClubG1Z",
+
+    website: "https://king-md-v7.onrender.com/",
+    // Pairing code style
+    pairingPrefix: "KINGMD",
+
+    // Prefix
+    prefix: ".",
 };
