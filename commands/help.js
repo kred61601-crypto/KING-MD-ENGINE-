@@ -1,158 +1,149 @@
-// commands/help.js - KING MD - FIXED to much with main.js
-const settings = (() => { try { return require('../settings'); } catch(e) { return {}; } })();
+// KING MD V4 - help.js - PERFECT STYLE 👑💎
 const fs = require('fs');
 const path = require('path');
 
-async function helpCommand(sock, message, ctx) {
-    const chatId = message.key.remoteJid;
-    const helpMessage = `
-╔═══════════════════╗
-   *🤖 ${settings.botName || 'KING MD'}*  
-   Version: *${settings.version || '3.0.0'}*
-   by ${settings.botOwner || 'KING MD'}
-   Channel: https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z
-╚═══════════════════╝
+async function helpCommand(sock, message) {
+    const from = message.key.remoteJid;
+    const uptime = Math.floor(process.uptime());
+    const h = Math.floor(uptime / 3600);
+    const m = Math.floor((uptime % 3600) / 60);
+    const s = uptime % 60;
 
-*Available Commands:*
+    const menuText = `╔════════════════════════╗
+║                        ║
+║   👑 𝕂𝕀ℕ𝔾 𝕄𝔻 𝕍𝟜 👑   ║
+║                        ║
+║   ⚡ 𝙋𝙍𝙀𝙈𝙄𝙐𝙈 𝘽𝙊𝙏 ⚡   ║
+║                        ║
+╚════════════════════════╝
 
-╔═══════════════════╗
-🌐 *General Commands*:
-║ ➤ .help or .menu
-║ ➤ .ping
-║ ➤ .alive
-║ ➤ .tts <text>
-║ ➤ .owner
-║ ➤ .joke
-║ ➤ .quote
-║ ➤ .fact
-║ ➤ .weather <city>
-║ ➤ .news
-║ ➤ .attp <text>
-║ ➤ .lyrics <song_title>
-║ ➤ .8ball <question>
-║ ➤ .groupinfo
-║ ➤ .staff or .admins 
-║ ➤ .trt <text> <lang>
-║ ➤ .ss <link>
-╚═══════════════════╝ 
+┏━━━━━━━━━━━━━━━━━━━━━┓
+┃  👑 *OWNER :* KING
+┃  🤖 *BOT :* KING MD V4
+┃  📦 *VERSION :* 4.0.0
+┃  🕐 *UPTIME :* ${h}h ${m}m ${s}s
+┃  🌍 *MODE :* Public
+┃  ⚡ *PING :* Fast
+┗━━━━━━━━━━━━━━━━━━━━━┛
 
-╔═══════════════════╗
-👮‍♂️ *Admin Commands*:
-║ ➤ .ban @user
-║ ➤ .promote @user
-║ ➤ .demote @user
-║ ➤ .mute <minutes>
-║ ➤ .unmute
-║ ➤ .delete or .del
-║ ➤ .kick @user
-║ ➤ .warnings @user
-║ ➤ .warn @user
-║ ➤ .antilink
-║ ➤ .antibadword
-║ ➤ .clear
-║ ➤ .tag <message>
-║ ➤ .tagall
-║ ➤ .welcome <on/off>
-║ ➤ .goodbye <on/off>
-╚═══════════════════╝
+*╭───〔 ⚡ GENERAL 〕───╮*
+*│*
+*│  ✦ .ping*
+*│  ✦ .alive*
+*│  ✦ .menu*
+*│  ✦ .owner*
+*│  ✦ .help*
+*│*
+*╰──────────────────╯*
 
-╔═══════════════════╗
-🔒 *Owner Commands*:
-║ ➤ .clearsession
-║ ➤ .antidelete
-║ ➤ .cleartmp
-║ ➤ .setpp <reply to image>
-║ ➤ .autostatus <on/off>
-║ ➤ .autotyping <on/off>
-║ ➤ .anticall <on/off>
-╚═══════════════════╝
+*╭───〔 👮 GROUP 〕───╮*
+*│*
+*│  ✦ .tagall*
+*│  ✦ .kick*
+*│  ✦ .ban / .unban*
+*│  ✦ .promote / .demote*
+*│  ✦ .mute / .unmute*
+*│  ✦ .warn*
+*│  ✦ .antilink*
+*│  ✦ .antibadword*
+*│  ✦ .groupinfo*
+*│  ✦ .welcome / .goodbye*
+*│*
+*╰──────────────────╯*
 
-╔═══════════════════╗
-🎨 *Image/Sticker Commands*:
-║ ➤ .blur <image>
-║ ➤ .simage <reply to sticker>
-║ ➤ .sticker <reply to image>
-║ ➤ .meme
-║ ➤ .take <packname> 
-║ ➤ .emojimix <emj1>+<emj2>
-╚═══════════════════╝  
+*╭───〔 🎮 FUN 〕───╮*
+*│*
+*│  ✦ .joke*
+*│  ✦ .meme*
+*│  ✦ .quote*
+*│  ✦ .fact*
+*│  ✦ .ship 💘*
+*│  ✦ .flirt*
+*│  ✦ .truth / .dare*
+*│  ✦ .eightball*
+*│  ✦ .hangman*
+*│  ✦ .trivia*
+*│  ✦ .tictactoe*
+*│*
+*╰──────────────────╯*
 
-╔═══════════════════╗
-🎮 *Game Commands*:
-║ ➤ .tictactoe @user
-║ ➤ .hangman
-║ ➤ .trivia
-║ ➤ .truth
-║ ➤ .dare
-╚═══════════════════╝
+*╭───〔 📥 DOWNLOAD 〕───╮*
+*│*
+*│  ✦ .play 🎵*
+*│  ✦ .song*
+*│  ✦ .video*
+*│  ✦ .tiktok*
+*│  ✦ .instagram*
+*│  ✦ .facebook*
+*│  ✦ .lyrics*
+*│*
+*╰──────────────────╯*
 
-╔═══════════════════╗
-🤖 *AI Commands*:
-║ ➤ .ai <question>
-║ ➤ .imagine <prompt>
-╚═══════════════════╝
+*╭───〔 🤖 AI & TOOLS 〕───╮*
+*│*
+*│  ✦ .ai*
+*│  ✦ .imagine 🎨*
+*│  ✦ .translate*
+*│  ✦ .tts*
+*│  ✦ .weather*
+*│  ✦ .news*
+*│  ✦ .ss*
+*│  ✦ .github*
+*│*
+*╰──────────────────╯*
 
-╔═══════════════════╗
-🎯 *Fun Commands*:
-║ ➤ .compliment @user
-║ ➤ .insult @user
-║ ➤ .flirt 
-║ ➤ .shayari
-║ ➤ .goodnight
-║ ➤ .roseday
-║ ➤ .character @user
-║ ➤ .wasted @user
-║ ➤ .ship @user
-║ ➤ .simp @user
-║ ➤ .stupid @user
-╚═══════════════════╝
+*╭───〔 📸 MEDIA 〕───╮*
+*│*
+*│  ✦ .sticker*
+*│  ✦ .simage*
+*│  ✦ .attp*
+*│  ✦ .textmaker*
+*│  ✦ .wasted*
+*│  ✦ .setpp*
+*│  ✦ .setbotbio*
+*│*
+*╰──────────────────╯*
 
-╔═══════════════════╗
-📥 *Downloader*:
-║ ➤ .play <song_name>
-║ ➤ .song <song_name>
-║ ➤ .instagram <link>
-║ ➤ .facebook <link>
-║ ➤ .tiktok <link>
-║ ➤ .video <song name>
-╚═══════════════════╝
+*╭───〔 👑 OWNER 〕───╮*
+*│*
+*│  ✦ .autostatus*
+*│  ✦ .autotyping*
+*│  ✦ .antidelete*
+*│  ✦ .anticall*
+*│  ✦ .block*
+*│  ✦ .creategc*
+*│*
+*╰──────────────────╯*
 
-Join our channel for updates:`;
+╔════════════════════════╗
+║  📢 *CHANNEL*  ║
+║  https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z  ║
+╚════════════════════════╝
+
+*👑 𝕂𝕀ℕ𝔾 𝕄𝔻 𝕍𝟜 — 𝙍𝙐𝙇𝙀𝙎 𝙏𝙃𝙀 𝙂𝘼𝙈𝙀 👑*`;
+
+    const menuPaths = [
+        path.join(__dirname, '..', 'assets', 'menu.jpg'),
+        path.join(__dirname, '..', 'assets', 'menu.png'),
+        path.join(__dirname, '..', 'assets', 'menu.jpeg'),
+    ];
+
+    let menuImage = null;
+    for (const p of menuPaths) {
+        if (fs.existsSync(p)) { menuImage = fs.readFileSync(p); break; }
+    }
 
     try {
-        const imagePath = path.join(__dirname, '../assets/bot_image.jpg');
-        if (fs.existsSync(imagePath)) {
-            const imageBuffer = fs.readFileSync(imagePath);
-            await sock.sendMessage(chatId, {
-                image: imageBuffer,
-                caption: helpMessage,
-                contextInfo: {
-                    forwardingScore: 1,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: '120363161513685998@newsletter',
-                        newsletterName: 'KING MD',
-                        serverMessageId: -1
-                    }
-                }
-            }, { quoted: message });
+        if (menuImage) {
+            await sock.sendMessage(from, { image: menuImage, caption: menuText });
         } else {
-            await sock.sendMessage(chatId, { 
-                text: helpMessage,
-                contextInfo: {
-                    forwardingScore: 1,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: '120363161513685998@newsletter',
-                        newsletterName: 'KING MD',
-                        serverMessageId: -1
-                    } 
-                }
-            }, { quoted: message });
+            let ppUrl = null;
+            try { ppUrl = await sock.profilePictureUrl(sock.user.id, 'image'); } catch (e) {}
+            if (ppUrl) await sock.sendMessage(from, { image: { url: ppUrl }, caption: menuText });
+            else await sock.sendMessage(from, { text: menuText });
         }
-    } catch (error) {
-        console.error('Error in help command:', error);
-        await sock.sendMessage(chatId, { text: helpMessage });
+    } catch (e) {
+        await sock.sendMessage(from, { text: menuText });
     }
 }
 
