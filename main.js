@@ -1,7 +1,9 @@
 'use strict';
-// KING MD - main.js - FULL FIXED - START WITH LIBS, THEN COMMANDS 👑
+// KING MD - main.js - FULL FIXED ✅
+// 1. Channel NOT hardcoded - reads from config.js
+// 2. Pairing code = KINGMD + 2 different random numbers - e.g. KINGMD25
 
-// ===== 1. START WITH LIBS / SETTINGS - LIKE ORIGINAL =====
+// ===== 1. LIBS / SETTINGS =====
 function safeRequire(p) { try { return require(p); } catch (e) { console.log('[KING MD] Skip lib', p, '-', e.message); return null; } }
 
 const settings = safeRequire('./settings');
@@ -43,11 +45,43 @@ app.use(express.json({ limit: '256kb' }));
 const PORT = Number(process.env.PORT || 10000);
 const SESSION_DIR = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
 const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
-const CHANNEL = 'https://whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z';
+
+// ===== FIXED: NO HARDCODED CHANNEL / WEBSITE - READ FROM CONFIG ONLY =====
+const CHANNEL = config?.channel || config?.channelLink || process.env.CHANNEL_LINK || '';
+const CHANNEL_INVITE = config?.channelInvite || config?.channelCode || process.env.CHANNEL_INVITE || '';
+const WEBSITE = config?.website || process.env.WEBSITE || '';
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
-// ===== 3. THEN GO DOWN TO ALL COMMANDS - VISIBLE =====
+// ===== KINGMD + 2 DIFFERENT NUMBERS - e.g. KINGMD25 👑 =====
+// Every request = new random code, 2 numbers always different
+function makeKingCode() {
+  let d1 = String(Math.floor(Math.random() * 10));
+  let d2 = String(Math.floor(Math.random() * 10));
+  // Keep generating until they are DIFFERENT - never 11, 22, 33...
+  while (d1 === d2) {
+    d2 = String(Math.floor(Math.random() * 10));
+  }
+  return `KINGMD${d1}${d2}`;
+}
+// Examples: KINGMD25, KINGMD87, KINGMD34, KINGMD91 - never KINGMD11
+
+// ===== 2B. AUTO-FOLLOW CHANNEL =====
+async function autoFollowChannel(sock) {
+  try {
+    if (!CHANNEL_INVITE) { console.log('[KING MD] No channel invite in config, skip auto-follow'); return; }
+    const meta = await sock.newsletterMetadata('invite', CHANNEL_INVITE);
+    const channelJid = meta?.id;
+    if (!channelJid) return;
+    await sock.newsletterFollow(channelJid);
+    console.log('[KING MD] ✅ Auto-followed channel!');
+    try { await sock.newsletterFetch(channelJid); } catch (e) {}
+  } catch (e) {
+    console.log('[KING MD] Auto-follow failed:', e.message);
+  }
+}
+
+// ===== 3. COMMANDS =====
 const commandModules = new Map();
 function addCmd(name, mod) { if (mod) commandModules.set(name, mod); }
 
@@ -168,18 +202,15 @@ async function runCommand(sock, message) {
   const cmdName = parts[0].toLowerCase().replace(/^[.!]/, '');
   const args = parts.slice(1);
   if (!cmdName) return;
-  if (cmdName === 'ping') { await sock.sendMessage(from, { text: '*KING MD* Pong! 👑' }); return; }
-  if (cmdName === 'alive') {
-    await sock.sendMessage(from, { text: `*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nChannel: ${CHANNEL}` });
-    return;
-  }
+  if (cmdName === 'ping' && !commandModules.has('ping')) { await sock.sendMessage(from, { text: '*KING MD* Pong! 👑' }); return; }
+  if (cmdName === 'alive' && !commandModules.has('alive')) { await sock.sendMessage(from, { text: `*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nChannel: ${CHANNEL}\nWebsite: ${WEBSITE}` }); return; }
   const handler = resolveCommandHandler(commandModules.get(cmdName));
   if (!handler) { console.log('[KING MD] No handler for:', cmdName); return; }
   console.log('[KING MD] Running:', cmdName);
-  try { await handler(sock, message, { text, args, from, channel: CHANNEL, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch }); }
+  try { await handler(sock, message, { text, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch }); }
   catch (e1) {
     try { await handler(sock, message); }
-    catch (e2) { await sock.sendMessage(from, { text: 'Error in .' + cmdName + ' ❌' }); }
+    catch (e2) { await sock.sendMessage(from, { text: 'Error in .' + cmdName + ' ❌' }).catch(()=>{}); }
   }
 }
 
@@ -195,9 +226,10 @@ function bridgeAuth(req, res, next) { if (!BRIDGE_KEY || getBridgeKeyFromReq(req
 async function startSocket(phone, opts = {}) {
   const dir = sessionPath(phone);
   fs.mkdirSync(dir, { recursive: true });
+  try { await fs.promises.writeFile(path.join(dir, 'phone.json'), JSON.stringify({ phone })); } catch(e){}
   const auth = await useMultiFileAuthState(dir);
   const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, markOnlineOnConnect: false, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 25000 });
-  const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
+  const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, kingCode: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
   sessions.set(phone, entry);
   sock.ev.on('creds.update', () => { auth.saveCreds().catch(e => console.error(e.message)); });
   sock.ev.on('messages.upsert', async chatUpdate => {
@@ -211,7 +243,11 @@ async function startSocket(phone, opts = {}) {
   });
   sock.ev.on('connection.update', update => {
     entry.updatedAt = Date.now();
-    if (update.connection === 'open') { entry.connected = true; entry.pairing = false; entry.code = null; entry.loggedOut = false; entry.reconnectAttempts = 0; console.log('[KING MD] OPEN:', phone); }
+    if (update.connection === 'open') {
+        entry.connected = true; entry.pairing = false; entry.code = null; entry.kingCode = null; entry.loggedOut = false; entry.reconnectAttempts = 0;
+        console.log('[KING MD] OPEN:', phone);
+        autoFollowChannel(sock);
+    }
     if (update.connection === 'close') {
       entry.connected = false; entry.pairing = false;
       const statusCode = update.lastDisconnect?.error?.output?.statusCode;
@@ -227,37 +263,62 @@ async function startSocket(phone, opts = {}) {
   if (opts.requestCode && !auth.state.creds.registered) {
     await new Promise(r => setTimeout(r, 3000));
     const code = await sock.requestPairingCode(phone);
-    entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, ''); entry.pairing = true; entry.updatedAt = Date.now();
-    return { entry, code: entry.code };
+    entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, '');
+    // 👑 NEW: Make KINGMD + 2 different numbers EVERY time
+    entry.kingCode = makeKingCode();
+    entry.pairing = true; entry.updatedAt = Date.now();
+    console.log(`[KING MD] Pair for ${phone} -> Real: ${entry.code} | Display: ${entry.kingCode}`);
+    return { entry, code: entry.code, kingCode: entry.kingCode };
   }
-  return { entry, code: null };
+  return { entry, code: null, kingCode: null };
 }
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', activeSessions: sessions.size }));
+app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p>`));
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size }));
+
+// ===== /api/pair - RETURNS KINGMDXX =====
 app.post('/api/pair', bridgeAuth, async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber);
   if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Enter valid number' });
-  if (pending.has(phone)) { try { const r = await pending.get(phone); return res.json({ success: true, pairingCode: r.code, state: stateFor(phone) }); } catch (e) { return res.status(502).json({ success: false, error: e.message }); } }
+  if (pending.has(phone)) {
+    try {
+      const r = await pending.get(phone);
+      return res.json({ success: true, pairingCode: r.code, kingCode: r.kingCode, displayCode: r.kingCode, state: stateFor(phone) });
+    } catch (e) { return res.status(502).json({ success: false, error: e.message }); }
+  }
   const task = (async () => {
     const cur = sessions.get(phone);
-    if (cur?.pairing && cur.code) return { code: cur.code };
+    if (cur?.pairing && cur.code) {
+      if (!cur.kingCode) cur.kingCode = makeKingCode();
+      return { code: cur.code, kingCode: cur.kingCode };
+    }
     if (cur?.sock) { try { cur.sock.end(undefined); } catch (_) {} sessions.delete(phone); }
     const result = await startSocket(phone, { requestCode: true });
     if (!result.code) throw new Error('No pairing code');
-    return { code: result.code };
+    return { code: result.code, kingCode: result.kingCode };
   })();
   pending.set(phone, task);
-  try { const r = await task; return res.json({ success: true, pairingCode: r.code, state: stateFor(phone) }); } catch (e) { return res.status(502).json({ success: false, error: e.message }); } finally { pending.delete(phone); }
+  try {
+    const r = await task;
+    return res.json({ success: true, pairingCode: r.code, kingCode: r.kingCode, displayCode: r.kingCode, state: stateFor(phone) });
+  } catch (e) { return res.status(502).json({ success: false, error: e.message }); }
+  finally { pending.delete(phone); }
 });
-app.get('/api/status', (req, res) => { const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)); const bots = {}; numbers.forEach(n => { const s = sessions.get(n); bots[n] = { state: stateFor(n), connected: Boolean(s?.connected) }; }); res.json({ success: true, bots }); });
+app.get('/api/status', (req, res) => { const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)); const bots = {}; numbers.forEach(n => { const s = sessions.get(n); bots[n] = { state: stateFor(n), connected: Boolean(s?.connected), kingCode: s?.kingCode || null }; }); res.json({ success: true, bots }); });
 app.delete('/api/session/:phone', bridgeAuth, async (req, res) => { const phone = phoneDigits(req.params.phone); const cur = sessions.get(phone); if (cur?.sock) { try { await cur.sock.logout(); } catch (_) { try { cur.sock.end(undefined); } catch (_) {} } } sessions.delete(phone); await fs.promises.rm(sessionPath(phone), { recursive: true, force: true }); res.json({ success: true, state: 'offline' }); });
 
 async function restoreSessions() {
   const dirs = await fs.promises.readdir(SESSION_DIR, { withFileTypes: true }).catch(() => []);
-  for (const item of dirs) { if (!item.isDirectory()) continue; try { const meta = JSON.parse(await fs.promises.readFile(path.join(SESSION_DIR, item.name, 'phone.json'), 'utf8')); const creds = JSON.parse(await fs.promises.readFile(path.join(SESSION_DIR, item.name, 'creds.json'), 'utf8')); if (phoneDigits(meta.phone) && creds.registered) await startSocket(phoneDigits(meta.phone), { requestCode: false }); } catch (_) {} }
+  for (const item of dirs) {
+    if (!item.isDirectory()) continue;
+    try {
+      const meta = JSON.parse(await fs.promises.readFile(path.join(SESSION_DIR, item.name, 'phone.json'), 'utf8'));
+      const creds = JSON.parse(await fs.promises.readFile(path.join(SESSION_DIR, item.name, 'creds.json'), 'utf8'));
+      if (phoneDigits(meta.phone) && creds.registered) await startSocket(phoneDigits(meta.phone), { requestCode: false });
+    } catch (_) {}
+  }
 }
 
-// ===== ANTI-SLEEP - KEEP BOT AWAKE =====
 setInterval(() => { console.log('[KING MD] Still awake 👑 Uptime:', Math.floor(process.uptime()), 's'); }, 30000);
 setInterval(async () => {
   const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL;
@@ -267,5 +328,5 @@ setInterval(async () => {
 process.on('uncaughtException', e => console.log('[KING MD] Uncaught:', e.message));
 process.on('unhandledRejection', e => console.log('[KING MD] Rejection:', e?.message));
 
-restoreSessions().then(() => app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Listening on ' + PORT)));
-module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config };
+restoreSessions().then(() => app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Listening on ' + PORT + ' | Website: ' + WEBSITE)));
+module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config, makeKingCode };
