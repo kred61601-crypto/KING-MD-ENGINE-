@@ -12,12 +12,30 @@ const pino = require('pino');
 const baileys = require('@whiskeysockets/baileys');
 
 let kingMain = null;
+let commandHandler = null;
 try {
   kingMain = require('./main');
-  console.log('[KING MD] main.js loaded, type:', typeof kingMain, 'keys:', kingMain && Object.keys(kingMain || {}));
+  // Support CommonJS and transpiled/default exports without changing main.js.
+  const candidates = [kingMain, kingMain && kingMain.default];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'function') { commandHandler = candidate; break; }
+    if (candidate && typeof candidate.handleMessages === 'function') {
+      commandHandler = candidate.handleMessages.bind(candidate); break;
+    }
+    if (candidate && typeof candidate.handleMessage === 'function') {
+      commandHandler = candidate.handleMessage.bind(candidate); break;
+    }
+    if (candidate && typeof candidate.handler === 'function') {
+      commandHandler = candidate.handler.bind(candidate); break;
+    }
+  }
+  console.log('[KING MD] main.js loaded; export type:', typeof kingMain,
+    'keys:', kingMain && Object.keys(kingMain || {}),
+    'command handler:', commandHandler ? 'available' : 'NOT EXPORTED');
 } catch (e) {
-  console.log('[KING MD] main.js not loaded as library (normal for full bot):', e.message);
+  console.error('[KING MD] Could not load main.js; full commands are unavailable:', e.stack || e.message);
   kingMain = null;
+  commandHandler = null;
 }
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
@@ -108,14 +126,12 @@ async function startSocket(phone, opts = {}) {
       try {
         // FORCE notify - your obfuscated main.js returns early if type !== 'notify'
         const fixedChatUpdate = { ...(chatUpdate || {}), type: 'notify', messages: [message] };
-        if (kingMain && typeof kingMain.handleMessages === 'function') {
-          await kingMain.handleMessages(sock, message, fixedChatUpdate);
-          console.log('[HANDLED] main.js handleMessages done for:', message.key.remoteJid);
-          continue;
-        }
-        if (typeof kingMain === 'function') {
-          await kingMain(sock, message, fixedChatUpdate);
-          console.log('[HANDLED] main.js function done');
+        if (commandHandler) {
+          // Keep the original bot's conventional argument order. The fourth
+          // argument is reserved for the optional message store used by some
+          // command handlers; undefined is safer than fabricating a store.
+          await commandHandler(sock, message, fixedChatUpdate, undefined);
+          console.log('[HANDLED] command dispatcher completed for:', message.key.remoteJid);
           continue;
         }
         const text = message.message.conversation || message.message.extendedTextMessage?.text || message.message.imageMessage?.caption || message.message.videoMessage?.caption || "";
@@ -124,9 +140,10 @@ async function startSocket(phone, opts = {}) {
         const from = message.key.remoteJid;
         if (text.trim() === '.ping') {
           await sock.sendMessage(from, { text: '*KING MD* Pong! Pairing engine alive 👑' });
-        }
-        if (text.trim() === '.menu' || text.trim() === '.alive') {
-          await sock.sendMessage(from, { text: '*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nEngine is working. Full commands come from main.js.' });
+        } else if (text.trim() === '.menu' || text.trim() === '.alive') {
+          await sock.sendMessage(from, { text: '*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nFull command dispatcher was not exported by main.js.' });
+        } else if (/^\s*[.!/#]/.test(text)) {
+          console.error('[KING MD] Command received but no compatible dispatcher was exported by main.js:', text.trim().split(/\s+/)[0]);
         }
       } catch (error) {
         console.error('[KING MD] Command handler failed:', error && error.message || error);
@@ -136,9 +153,9 @@ async function startSocket(phone, opts = {}) {
 
   sock.ev.on('group-participants.update', async update => {
     try {
-      if (kingMain && typeof kingMain.handleGroupParticipantUpdate === 'function') {
-        await kingMain.handleGroupParticipantUpdate(sock, update);
-      }
+      const groupHandler = kingMain && (kingMain.handleGroupParticipantUpdate ||
+        (kingMain.default && kingMain.default.handleGroupParticipantUpdate));
+      if (typeof groupHandler === 'function') await groupHandler.call(kingMain, sock, update);
     } catch (error) {
       console.error('[KING MD] Group participant handler failed:', error && error.message || error);
     }
