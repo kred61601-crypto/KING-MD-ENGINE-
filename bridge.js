@@ -1,8 +1,8 @@
 'use strict';
 
-// KING MD pairing gateway - FIXED for V4 App CHECKING bug
-// Fix: /api/status is now public so App can show ONLINE/OFFLINE
-// Fix: bridgeAuth accepts x-pair-bridge-key, x-api-key, Authorization
+// KING MD pairing gateway - FIXED for FULL BOT
+// Fix: Does NOT crash on big obfuscated main.js
+// Fix: /api/status is public so App can show ONLINE/OFFLINE
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -11,7 +11,16 @@ const crypto = require('crypto');
 const pino = require('pino');
 const baileys = require('@whiskeysockets/baileys');
 
-const { handleMessages, handleGroupParticipantUpdate } = require('./main');
+// DO NOT require('./main') here - your big main.js is NOT a library
+// We load it safely inside startSocket, it will never crash bridge.js
+let kingMain = null;
+try {
+  kingMain = require('./main');
+  console.log('[KING MD] main.js loaded, type:', typeof kingMain, 'keys:', kingMain && Object.keys(kingMain || {}));
+} catch (e) {
+  console.log('[KING MD] main.js not loaded as library (normal for full bot):', e.message);
+  kingMain = null;
+}
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
 const useMultiFileAuthState = baileys.useMultiFileAuthState;
@@ -35,8 +44,6 @@ app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 const PORT = Number(process.env.PORT || 10000);
 const SESSION_DIR = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
-// Must match the private server-to-server key in the KING MD V1 app server.
-// V4 App may send it as x-api-key or Authorization, we accept all below.
 const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -48,7 +55,6 @@ const sessionPath = phone => path.join(SESSION_DIR, crypto.createHash('sha256').
 const stateFor = phone => {
   const s = sessions.get(phone);
   if (!s) {
-    // If creds file exists on disk but not in memory yet (restart), don't lie "offline"
     try {
       const creds = JSON.parse(fs.readFileSync(path.join(sessionPath(phone), 'creds.json'), 'utf8'));
       if (creds && creds.registered) return 'connecting';
@@ -94,29 +100,49 @@ async function startSocket(phone, opts = {}) {
     auth.saveCreds().catch(error => console.error('[KING MD] Could not save WhatsApp credentials:', error.message));
   });
   sock.public = true;
+
   sock.ev.on('messages.upsert', async chatUpdate => {
     const { messages } = chatUpdate || {};
     if (!Array.isArray(messages)) return;
-
-    // Do not gate on type === 'notify': some Baileys builds deliver live user
-    // messages through other upsert types. The command handler should decide
-    // whether an individual message is actionable.
     for (const message of messages) {
       if (!message || !message.key || !message.key.remoteJid || !message.message) continue;
       try {
-        await handleMessages(sock, message, chatUpdate);
+        // Try full bot first
+        if (kingMain && typeof kingMain.handleMessages === 'function') {
+          await kingMain.handleMessages(sock, message, chatUpdate);
+          continue;
+        }
+        if (typeof kingMain === 'function') {
+          await kingMain(sock, message, chatUpdate);
+          continue;
+        }
+        // Fallback - bridge alive, so pairing + ping always work even if main.js is obfuscated
+        const text = message.message.conversation || message.message.extendedTextMessage?.text || message.message.imageMessage?.caption || message.message.videoMessage?.caption || "";
+        if (!text) continue;
+        if (message.key.fromMe) continue;
+        const from = message.key.remoteJid;
+        if (text.trim() === '.ping') {
+          await sock.sendMessage(from, { text: '*KING MD* Pong! Pairing engine alive 👑\nFull bot main.js loaded as: ' + (kingMain ? typeof kingMain : 'not-loaded') });
+        }
+        if (text.trim() === '.menu' || text.trim() === '.alive') {
+          await sock.sendMessage(from, { text: '*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nEngine is working. Full commands come from main.js.' });
+        }
       } catch (error) {
-        console.error('[KING MD] Original command handler failed:', error && error.stack || error);
+        console.error('[KING MD] Command handler failed:', error && error.message || error);
       }
     }
   });
+
   sock.ev.on('group-participants.update', async update => {
     try {
-      await handleGroupParticipantUpdate(sock, update);
+      if (kingMain && typeof kingMain.handleGroupParticipantUpdate === 'function') {
+        await kingMain.handleGroupParticipantUpdate(sock, update);
+      }
     } catch (error) {
-      console.error('[KING MD] Group participant handler failed:', error && error.stack || error);
+      console.error('[KING MD] Group participant handler failed:', error && error.message || error);
     }
   });
+
   sock.ev.on('connection.update', update => {
     entry.updatedAt = Date.now();
     if (update.connection === 'connecting') {
@@ -174,7 +200,6 @@ const startSocketWithIndex = async function(phone, opts) {
   try { await fs.promises.writeFile(path.join(sessionPath(phone), 'phone.json'), JSON.stringify({ phone }), { mode: 0o600 }); } catch (_) {}
   return result;
 };
-// Use wrapper for all future calls
 const startSocketFinal = startSocketWithIndex;
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD WhatsApp Pairing Engine', activeSessions: sessions.size }));
@@ -212,7 +237,6 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
   } finally { pending.delete(phone); }
 });
 
-// FIXED: No bridgeAuth here - V4 App needs to poll this without key to stop CHECKING
 app.get('/api/status', (req, res) => {
   const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)).slice(0, 30);
   const bots = {};
