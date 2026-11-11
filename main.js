@@ -53,6 +53,7 @@ function addCmd(name, mod) { if (mod) commandModules.set(name, mod); }
 
 addCmd('tagall', safeRequire('./commands/tagall'));
 addCmd('help', safeRequire('./commands/help'));
+addCmd('menu', safeRequire('./commands/help'));
 addCmd('ban', safeRequire('./commands/ban'));
 addCmd('promote', safeRequire('./commands/promote'));
 addCmd('anticall', safeRequire('./commands/anticall'));
@@ -157,14 +158,18 @@ function resolveCommandHandler(mod) {
 
 async function runCommand(sock, message) {
   const text = message.message?.conversation || message.message?.extendedTextMessage?.text || message.message?.imageMessage?.caption || message.message?.videoMessage?.caption || "";
-  if (!text || message.key.fromMe) return;
+  if (!text) return;
+  const trimmed = text.trim();
+  const isCommand = trimmed.startsWith('.') || trimmed.startsWith('!');
+  if (message.key.fromMe && !isCommand) return;
+  if (!message.key.fromMe && !isCommand) return;
   const from = message.key.remoteJid;
-  const parts = text.trim().split(/\s+/);
+  const parts = trimmed.split(/\s+/);
   const cmdName = parts[0].toLowerCase().replace(/^[.!]/, '');
   const args = parts.slice(1);
   if (!cmdName) return;
   if (cmdName === 'ping') { await sock.sendMessage(from, { text: '*KING MD* Pong! 👑' }); return; }
-  if (cmdName === 'alive' || cmdName === 'menu') {
+  if (cmdName === 'alive') {
     await sock.sendMessage(from, { text: `*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nChannel: ${CHANNEL}` });
     return;
   }
@@ -216,7 +221,6 @@ async function startSocket(phone, opts = {}) {
         const attempt = (entry.reconnectAttempts || 0) + 1; entry.reconnectAttempts = attempt;
         const delay = Math.min(15000, 1500 * attempt);
         entry.reconnectTimer = setTimeout(async () => { entry.reconnectTimer = null; if (sessions.get(phone) !== entry) return; try { await startSocket(phone, { requestCode: false }); } catch (e) { console.error(e.message); } }, delay);
-        if (entry.reconnectTimer.unref) entry.reconnectTimer.unref();
       }
     }
   });
@@ -252,5 +256,16 @@ async function restoreSessions() {
   const dirs = await fs.promises.readdir(SESSION_DIR, { withFileTypes: true }).catch(() => []);
   for (const item of dirs) { if (!item.isDirectory()) continue; try { const meta = JSON.parse(await fs.promises.readFile(path.join(SESSION_DIR, item.name, 'phone.json'), 'utf8')); const creds = JSON.parse(await fs.promises.readFile(path.join(SESSION_DIR, item.name, 'creds.json'), 'utf8')); if (phoneDigits(meta.phone) && creds.registered) await startSocket(phoneDigits(meta.phone), { requestCode: false }); } catch (_) {} }
 }
+
+// ===== ANTI-SLEEP - KEEP BOT AWAKE =====
+setInterval(() => { console.log('[KING MD] Still awake 👑 Uptime:', Math.floor(process.uptime()), 's'); }, 30000);
+setInterval(async () => {
+  const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL;
+  if (!selfUrl) return;
+  try { const r = await fetch(selfUrl + '/health'); console.log('[KING MD] Self-ping:', r.status); } catch (e) { console.log('[KING MD] Self-ping fail:', e.message); }
+}, 4 * 60 * 1000);
+process.on('uncaughtException', e => console.log('[KING MD] Uncaught:', e.message));
+process.on('unhandledRejection', e => console.log('[KING MD] Rejection:', e?.message));
+
 restoreSessions().then(() => app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Listening on ' + PORT)));
 module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config };
