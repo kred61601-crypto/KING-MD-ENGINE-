@@ -1,8 +1,8 @@
 'use strict';
 
 // KING MD pairing gateway - FIXED for FULL BOT
-// Fix: Does NOT crash on big obfuscated main.js
-// Fix: /api/status is public so App can show ONLINE/OFFLINE
+// Fix: Forces chatUpdate.type = 'notify' so obfuscated main.js does NOT drop messages
+// Fix: Adds [INCOMING] log so you can see messages in Render
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -11,8 +11,6 @@ const crypto = require('crypto');
 const pino = require('pino');
 const baileys = require('@whiskeysockets/baileys');
 
-// DO NOT require('./main') here - your big main.js is NOT a library
-// We load it safely inside startSocket, it will never crash bridge.js
 let kingMain = null;
 try {
   kingMain = require('./main');
@@ -105,24 +103,27 @@ async function startSocket(phone, opts = {}) {
     const { messages } = chatUpdate || {};
     if (!Array.isArray(messages)) return;
     for (const message of messages) {
+      console.log('[INCOMING] from:', message.key?.remoteJid, 'fromMe:', message.key?.fromMe, 'upsertType:', chatUpdate?.type, 'text:', message.message?.conversation || message.message?.extendedTextMessage?.text || message.message?.imageMessage?.caption || '[not-text]');
       if (!message || !message.key || !message.key.remoteJid || !message.message) continue;
       try {
-        // Try full bot first
+        // FORCE notify - your obfuscated main.js returns early if type !== 'notify'
+        const fixedChatUpdate = { ...(chatUpdate || {}), type: 'notify', messages: [message] };
         if (kingMain && typeof kingMain.handleMessages === 'function') {
-          await kingMain.handleMessages(sock, message, chatUpdate);
+          await kingMain.handleMessages(sock, message, fixedChatUpdate);
+          console.log('[HANDLED] main.js handleMessages done for:', message.key.remoteJid);
           continue;
         }
         if (typeof kingMain === 'function') {
-          await kingMain(sock, message, chatUpdate);
+          await kingMain(sock, message, fixedChatUpdate);
+          console.log('[HANDLED] main.js function done');
           continue;
         }
-        // Fallback - bridge alive, so pairing + ping always work even if main.js is obfuscated
         const text = message.message.conversation || message.message.extendedTextMessage?.text || message.message.imageMessage?.caption || message.message.videoMessage?.caption || "";
         if (!text) continue;
         if (message.key.fromMe) continue;
         const from = message.key.remoteJid;
         if (text.trim() === '.ping') {
-          await sock.sendMessage(from, { text: '*KING MD* Pong! Pairing engine alive 👑\nFull bot main.js loaded as: ' + (kingMain ? typeof kingMain : 'not-loaded') });
+          await sock.sendMessage(from, { text: '*KING MD* Pong! Pairing engine alive 👑' });
         }
         if (text.trim() === '.menu' || text.trim() === '.alive') {
           await sock.sendMessage(from, { text: '*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nEngine is working. Full commands come from main.js.' });
