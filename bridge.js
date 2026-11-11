@@ -95,10 +95,14 @@ async function startSocket(phone, opts = {}) {
   });
   sock.public = true;
   sock.ev.on('messages.upsert', async chatUpdate => {
-    const { messages, type } = chatUpdate || {};
-    if (!Array.isArray(messages) || type !== 'notify') return;
+    const { messages } = chatUpdate || {};
+    if (!Array.isArray(messages)) return;
+
+    // Do not gate on type === 'notify': some Baileys builds deliver live user
+    // messages through other upsert types. The command handler should decide
+    // whether an individual message is actionable.
     for (const message of messages) {
-      if (!message || !message.message || !message.key || !message.key.remoteJid) continue;
+      if (!message || !message.key || !message.key.remoteJid || !message.message) continue;
       try {
         await handleMessages(sock, message, chatUpdate);
       } catch (error) {
@@ -175,7 +179,7 @@ const startSocketFinal = startSocketWithIndex;
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD WhatsApp Pairing Engine', activeSessions: sessions.size }));
 app.get('/api/health', (_req, res) => res.json({ success: true, service: 'KING MD WhatsApp Pairing Engine' }));
-app.get('/sessions', (_req, res) => res.json({ success: true, total: sessions.size, serverStats: { detectedServers: 1, serversLeft: 0 }, bots: [...sessions.values()].map(s => ({ number: s.phone, state: stateFor(s.phone) })) }));
+app.get('/sessions', (_req, res) => res.json({ success: true, total: sessions.size, serverStats: { detectedServers: 1, serversLeft: 0 }, bots: [...sessions.values()].map(s => ({ number: s.phone, state: stateFor(s.phone), connected: s.connected })) }));
 
 app.post('/api/pair', bridgeAuth, async (req, res) => {
   const phone = phoneDigits(req.body && req.body.phoneNumber);
