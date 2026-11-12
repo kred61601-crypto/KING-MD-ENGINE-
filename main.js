@@ -112,7 +112,7 @@ async function sendPrivateWelcome(sock, phone) {
 └➤ \`${password}\`
 
 *🌐 Bot Control Panel*
-└➤ ${WEBSITE || 'https://king-md-v1-51j8.onrender.com/settings'}
+└➤ ${WEBSITE || 'https://your-kingmd-panel/settings'}
 ━━━━━━━━━━━━━━━━
 
 *📍 How to Manage Your Bot*
@@ -255,18 +255,30 @@ function loadCommands() {
     const commandName = path.basename(file, '.js').toLowerCase();
     try { const absolutePath = path.join(commandDirectory, file); delete require.cache[require.resolve(absolutePath)]; const mod = require(absolutePath); if (!addCmd(commandName, mod, file)) console.warn(`[KING MD] Skipped ${file}`); } catch (error) { console.error(`[KING MD] Failed loading ${file}:`, error.message); }
   }
-  for (const [alias, target] of Object.entries({ menu: 'help', ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
+  // FIX: menu is NOT an alias to help anymore. menu must work even if help.js is missing.
+  // Only keep safe aliases that don't break menu.
+  for (const [alias, target] of Object.entries({ ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
   if (commandModules.has('vv2') && !commandAliases.has('vv')) commandAliases.set('vv', 'vv2');
-  console.log(`[KING MD] Auto-loaded ${commandModules.size} commands`);
+  // If help exists, menu can point to it, but if help does NOT exist, menu will use built-in fallback in runCommand.
+  if (commandModules.has('help') && !commandAliases.has('menu')) commandAliases.set('menu', 'help');
+  console.log(`[KING MD] Auto-loaded ${commandModules.size} commands: ${[...commandModules.keys()].join(', ')}`);
 }
 loadCommands();
 function getMessageText(message) {
   const msg = message?.message || {};
   return msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || msg.documentMessage?.caption || msg.buttonsResponseMessage?.selectedButtonId || msg.listResponseMessage?.singleSelectReply?.selectedRowId || '';
 }
+async function sendBuiltInMenu(sock, from, message, prefix) {
+  const list = [...commandModules.keys()].sort().map(c => `• ${prefix}${c}`).join('\n') || 'No commands loaded - check commands/ folder';
+  const text = `╭──────────────────❍\n│ 👑🔥 KING-MD-V4 MENU 🔥👑\n╰──────────────────❍\n\n${list}\n\n*Total:* ${commandModules.size} commands\n*Prefix:* ${prefix}\n*Type:* ${prefix}password for Manage password`;
+  await sock.sendMessage(from, { text }, { quoted: message }).catch(()=>{});
+}
 async function runCommand(sock, message) {
   const rawText = getMessageText(message);
-  if (!rawText || !message?.key?.remoteJid || message.key.fromMe) return;
+  // FIX: DO NOT block fromMe - owner sends commands from bot number itself. That was why ALL commands failed.
+  if (!rawText || !message?.key?.remoteJid) return;
+  // Ignore status / newsletter / bot's own welcome spam, but allow normal chats + self chat
+  if (message.key.remoteJid === 'status@broadcast' || message.key.remoteJid.endsWith('@newsletter')) return;
   const trimmed = rawText.trim();
   const configuredPrefix = String(config?.prefix || settings?.prefix || '.');
   const prefixes = [...new Set([configuredPrefix, '.', '!'].filter(Boolean))];
@@ -275,8 +287,20 @@ async function runCommand(sock, message) {
   const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
   const requestedName = (parts.shift() || '').toLowerCase();
   if (!requestedName) return;
+  const from = message.key.remoteJid;
+  // FIX: menu / help always works even if no help.js file exists
+  if (requestedName === 'menu' || requestedName === 'help') {
+    if (commandModules.has('menu')) {
+      // fall through to normal handler below
+    } else if (commandModules.has('help')) {
+      // fall through, handler will be help
+    } else {
+      console.log('[KING MD] Running: menu (built-in)');
+      await sendBuiltInMenu(sock, from, message, prefix);
+      return;
+    }
+  }
   if (requestedName === 'password') {
-    const from = message.key.remoteJid;
     const isPrivate = !from.endsWith('@g.us') && !from.endsWith('@newsletter');
     if (!isPrivate) { await sock.sendMessage(from, { text: `❌ *KING MD*\nFor safety, type *.password* in private chat with your bot, not in group.` }, { quoted: message }).catch(()=>{}); return; }
     const ownerPhone = from.split('@')[0].split(':')[0];
@@ -287,7 +311,6 @@ async function runCommand(sock, message) {
   }
   const cmdName = commandAliases.get(requestedName) || requestedName;
   const handler = commandModules.get(cmdName);
-  const from = message.key.remoteJid;
   const args = parts;
   const extra = { text: rawText, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch, command: cmdName, prefix, commands: [...commandModules.keys()], downloadMediaMessage: baileys.downloadMediaMessage };
   if (!handler) { await sock.sendMessage(from, { text: `❌ Unknown command: *${requestedName}*\n\nSend *.menu* to see the commands currently installed.` }, { quoted: message }).catch(() => {}); return; }
@@ -310,11 +333,13 @@ function getBridgeKeyFromReq(req) { return req.get('x-pair-bridge-key') || req.g
 function bridgeAuth(req, res, next) { if (!BRIDGE_KEY || getBridgeKeyFromReq(req) !== BRIDGE_KEY) return res.status(401).json({ success: false, error: 'Unauthorized' }); next(); }
 
 async function startSocket(phone, opts = {}) {
+  const existing = sessions.get(phone);
+  if (existing?.sock && existing.connected && !opts.requestCode) return { entry: existing, code: null, kingCode: null };
   const dir = sessionPath(phone);
   fs.mkdirSync(dir, { recursive: true });
   try { await fs.promises.writeFile(path.join(dir, 'phone.json'), JSON.stringify({ phone })); } catch(e){}
   const auth = await useMultiFileAuthState(dir);
-  const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, markOnlineOnConnect: true, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 15000, retryRequestDelayMs: 500, maxMsgRetryCount: 5, getMessage: async (key) => {
+  const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, shouldSyncHistoryMessage: () => false, emitOwnEvents: false, markOnlineOnConnect: true, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 15000, retryRequestDelayMs: 500, maxMsgRetryCount: 5, getMessage: async (key) => {
     try {
       const cached = viewOnceCache.get((key.remoteJid || '') + '|' + (key.id || ''));
       if (cached) return { key, message: cached.inner };
