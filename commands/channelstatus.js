@@ -1,134 +1,139 @@
 'use strict';
-// KING MD - commands/channelstatus.js - FRESH FIXED
-// Post text / photo / video to any channel
+// KING MD - commands/channelstatus.js - REPLY VERSION
+// Reply to ANYTHING with: .channelstatus <channel link>
+// Reply to photo/video/text with: .channelstatus https://whatsapp.com/channel/CODE
+// Or just: .channelstatus Hello KING (posts to default channel)
 
 async function react(sock, msg, emoji) {
-  try {
-    await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } });
-  } catch (_) {}
+  try { await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } }); } catch (_) {}
 }
 
 async function resolveChannelJid(sock, link) {
-  const raw = String(link || '').trim();
-  let id = raw;
-  if (raw.includes('/channel/')) id = raw.split('/channel/')[1].split(/[?\/\s]/)[0];
-  id = id.trim();
-  if (!id) return null;
-  if (id.includes('@newsletter')) return id;
+  let raw = String(link || '').trim();
+  // Extract code from full link: whatsapp.com/channel/CODE
+  const m = raw.match(/whatsapp\.com\/channel\/([A-Za-z0-9_-]+)/);
+  if (m) raw = m[1];
+  else if (raw.includes('/channel/')) raw = raw.split('/channel/')[1].split(/[?\/\s]/)[0];
+  raw = raw.trim();
+  if (!raw) return null;
+  if (raw.includes('@newsletter')) return raw;
   try {
-    const meta = await sock.newsletterMetadata('jid', id + '@newsletter');
+    const meta = await sock.newsletterMetadata('jid', raw + '@newsletter');
     if (meta?.id) return meta.id;
   } catch (_) {}
   try {
-    const meta2 = await sock.newsletterMetadata('invite', id);
+    const meta2 = await sock.newsletterMetadata('invite', raw);
     if (meta2?.id) return meta2.id;
   } catch (_) {}
   return null;
 }
 
 function getQuoted(msg) {
-  try {
-    const ctx = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo || {};
-    return { quoted: ctx.quotedMessage || null, participant: ctx.participant || null, stanzaId: ctx.stanzaId || null };
-  } catch (_) { return { quoted: null }; }
+  const ctx = msg.message?.extendedTextMessage?.contextInfo
+    || msg.message?.imageMessage?.contextInfo
+    || msg.message?.videoMessage?.contextInfo
+    || {};
+  return { quoted: ctx.quotedMessage || null, participant: ctx.participant || null, stanzaId: ctx.stanzaId || null, ctx };
 }
 
-async function downloadQuoted(sock, msg, extra) {
+function getQuotedText(quoted) {
+  if (!quoted) return '';
+  return quoted.conversation
+    || quoted.extendedTextMessage?.text
+    || quoted.imageMessage?.caption
+    || quoted.videoMessage?.caption
+    || quoted.documentMessage?.caption
+    || '';
+}
+
+async function downloadQuotedMedia(sock, msg, extra) {
+  const { quoted, participant, stanzaId } = getQuoted(msg);
+  if (!quoted) return null;
+  const download = extra.downloadMediaMessage || sock.downloadMediaMessage?.bind(sock);
+  if (!download) return null;
   try {
-    const { quoted, participant, stanzaId } = getQuoted(msg);
-    if (!quoted) return null;
-    const download = extra.downloadMediaMessage || sock.downloadMediaMessage?.bind(sock);
-    if (!download) return null;
     const fake = { key: { remoteJid: msg.key.remoteJid, id: stanzaId, participant, fromMe: false }, message: quoted };
     const buffer = await download(fake);
     if (!buffer) return null;
     if (quoted.videoMessage) return { type: 'video', buffer, caption: quoted.videoMessage.caption || '' };
     if (quoted.imageMessage) return { type: 'image', buffer, caption: quoted.imageMessage.caption || '' };
     if (quoted.documentMessage) return { type: 'document', buffer, caption: quoted.documentMessage.caption || '' };
-    return null;
-  } catch (_) { return null; }
+  } catch (_) {}
+  return null;
 }
 
 async function downloadOwnMedia(sock, msg, extra) {
+  const m = msg.message || {};
+  const download = extra.downloadMediaMessage || sock.downloadMediaMessage?.bind(sock);
+  if (!download) return null;
   try {
-    const m = msg.message || {};
-    const download = extra.downloadMediaMessage || sock.downloadMediaMessage?.bind(sock);
-    if (!download) return null;
-    if (m.videoMessage) {
-      const buf = await download(msg);
-      return { type: 'video', buffer: buf, caption: m.videoMessage.caption || '' };
-    }
-    if (m.imageMessage) {
-      const buf = await download(msg);
-      return { type: 'image', buffer: buf, caption: m.imageMessage.caption || '' };
-    }
-    return null;
-  } catch (_) { return null; }
+    if (m.videoMessage) return { type: 'video', buffer: await download(msg), caption: m.videoMessage.caption || '' };
+    if (m.imageMessage) return { type: 'image', buffer: await download(msg), caption: m.imageMessage.caption || '' };
+  } catch (_) {}
+  return null;
 }
 
 module.exports = {
   name: 'channelstatus',
   alias: ['cstatus', 'channelpost', 'cpost', 'chstatus'],
-  desc: 'Post text, photo or video to any channel',
-  category: 'general',
+  desc: 'Reply to anything to post it to a channel',
   async execute(sock, msg, args, extra = {}) {
     await react(sock, msg, '📢');
     const from = extra.from || msg.key.remoteJid;
     let fullText = args.join(' ').trim();
 
-    const ownMedia = await downloadOwnMedia(sock, msg, extra);
-    if (ownMedia) {
-      const cap = ownMedia.caption.replace(/^\.(channelstatus|cstatus|channelpost|cpost|chstatus)\s*/i, '').trim();
-      if (cap) fullText = cap;
+    // --- 1. FIND CHANNEL LINK in args ---
+    // Supports: full link, just CODE, or "link | caption"
+    let channelLink = extra.channelInvite || extra.channel || process.env.CHANNEL_INVITE || '0029Vb9AwScF6sn47ClubG1Z';
+    let postText = fullText;
+
+    const linkMatch = fullText.match(/(https?:\/\/)?(www\.)?whatsapp\.com\/channel\/[A-Za-z0-9_-]+/);
+    if (linkMatch) {
+      channelLink = linkMatch[0];
+      postText = fullText.replace(linkMatch[0], '').replace(/^\s*\|\s*/, '').trim();
+    } else if (fullText.includes('|')) {
+      const parts = fullText.split('|');
+      channelLink = parts[0].trim();
+      postText = parts.slice(1).join('|').trim();
+    } else if (/^[A-Za-z0-9_-]{15,}$/.test(args[0] || '') && args.length >= 1 && !postText.includes(' ')) {
+      // Just a CODE alone: .channelstatus 0029Vb9...
+      channelLink = args[0];
+      postText = '';
     }
-    const quotedMedia = !ownMedia ? await downloadQuoted(sock, msg, extra) : null;
+
+    // --- 2. GET REPLIED THING ---
+    const { quoted } = getQuoted(msg);
+    const quotedText = getQuotedText(quoted);
+    const ownMedia = await downloadOwnMedia(sock, msg, extra);
+    const quotedMedia = !ownMedia ? await downloadQuotedMedia(sock, msg, extra) : null;
     const media = ownMedia || quotedMedia;
 
-    if (!fullText && !media) {
+    // If user replied and didn't type a caption, use the replied text/caption
+    if (!postText) {
+      if (media?.caption) postText = media.caption.replace(/^\.(channelstatus|cstatus|channelpost|cpost|chstatus)\s*/i, '').trim();
+      else if (quotedText) postText = quotedText;
+    }
+    // If own media caption contains command, clean it
+    if (media && postText) postText = postText.replace(/^\.(channelstatus|cstatus|channelpost|cpost|chstatus)\s*/i, '').trim();
+
+    if (!postText && !media) {
       await sock.sendMessage(from, {
-        text: `*CHANNEL STATUS 📢 - Text / Photo / Video*\n\n*Text:*\n.channelstatus Hello everyone 👑\n\n*Your channel + text:*\n.channelstatus https://whatsapp.com/channel/CODE | Hello 🔥\n\n*Photo / Video:*\nSend photo/video with caption .channelstatus\nOR reply to any photo/video with .channelstatus\nOR reply to photo/video with .channelstatus https://whatsapp.com/channel/CODE | My caption\n\n*View channel:*\n.channelstatus view https://whatsapp.com/channel/CODE`
+        text: `*CHANNEL STATUS 📢*\n\n*Reply to ANYTHING:*\nReply to photo/video/text with:\n.channelstatus https://whatsapp.com/channel/CODE\n\n*Or post new text:*\n.channelstatus Hello KING 👑\n\n*Or post to your channel + caption:*\n.channelstatus https://whatsapp.com/channel/CODE | Hello 🔥\n\n*View channel:*\n.channelstatus view https://whatsapp.com/channel/CODE`
       }, { quoted: msg });
       await react(sock, msg, '✅');
       return;
     }
 
-    if (fullText.toLowerCase().startsWith('view ')) {
-      const link = fullText.slice(5).trim();
+    if (postText.toLowerCase().startsWith('view ')) {
+      const link = postText.slice(5).trim();
       const jid = await resolveChannelJid(sock, link);
-      if (!jid) {
-        await sock.sendMessage(from, { text: 'Channel not found.' }, { quoted: msg });
-        await react(sock, msg, '❌');
-        return;
-      }
+      if (!jid) { await sock.sendMessage(from, { text: 'Channel not found.' }, { quoted: msg }); await react(sock, msg, '❌'); return; }
       try {
         const feed = await sock.newsletterFetch(jid);
         const last = feed?.messages?.[0]?.message?.conversation || feed?.messages?.[0]?.message?.extendedTextMessage?.text || 'Photo/Video post';
         await sock.sendMessage(from, { text: `*Channel:* ${feed?.metadata?.name || 'Channel'}\n*Latest:*\n${last}` }, { quoted: msg });
         await react(sock, msg, '✅');
-      } catch (_) {
-        await sock.sendMessage(from, { text: 'Could not fetch. Make bot follow that channel.' }, { quoted: msg });
-        await react(sock, msg, '❌');
-      }
-      return;
-    }
-
-    let channelLink = extra.channelInvite || extra.channel || process.env.CHANNEL_INVITE || '0029Vb9AwScF6sn47ClubG1Z';
-    let postText = fullText;
-
-    if (fullText.includes('|')) {
-      const parts = fullText.split('|');
-      channelLink = parts[0].trim();
-      postText = parts.slice(1).join('|').trim();
-    } else if (fullText.includes('whatsapp.com/channel/')) {
-      const words = fullText.split(/\s+/);
-      channelLink = words[0];
-      postText = words.slice(1).join(' ').trim();
-    }
-
-    if (media && !postText) postText = media.caption || '';
-    if (!postText && !media) {
-      await sock.sendMessage(from, { text: 'Add text or reply to photo/video.' }, { quoted: msg });
-      await react(sock, msg, '❌');
+      } catch (_) { await sock.sendMessage(from, { text: 'Could not fetch. Make bot follow that channel.' }, { quoted: msg }); await react(sock, msg, '❌'); }
       return;
     }
 
@@ -141,15 +146,11 @@ module.exports = {
 
     const footer = '\n\n> 👑 KING MD 👑';
     try {
-      if (media?.type === 'video') {
-        await sock.sendMessage(channelJid, { video: media.buffer, caption: (postText || 'KING MD 👑') + footer });
-      } else if (media?.type === 'image') {
-        await sock.sendMessage(channelJid, { image: media.buffer, caption: (postText || 'KING MD 👑') + footer });
-      } else if (media?.type === 'document') {
-        await sock.sendMessage(channelJid, { document: media.buffer, fileName: 'file', caption: postText + footer });
-      } else {
-        await sock.sendMessage(channelJid, { text: postText + footer });
-      }
+      if (media?.type === 'video') await sock.sendMessage(channelJid, { video: media.buffer, caption: (postText || 'KING MD 👑') + footer });
+      else if (media?.type === 'image') await sock.sendMessage(channelJid, { image: media.buffer, caption: (postText || 'KING MD 👑') + footer });
+      else if (media?.type === 'document') await sock.sendMessage(channelJid, { document: media.buffer, fileName: 'file', caption: postText + footer });
+      else await sock.sendMessage(channelJid, { text: postText + footer });
+
       await sock.sendMessage(from, { text: `*Posted to Channel ✅*\n\nType: ${media ? media.type : 'text'}\nCaption: ${postText || 'No caption'}` }, { quoted: msg });
       await react(sock, msg, '✅');
     } catch (e) {
