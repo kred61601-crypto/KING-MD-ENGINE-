@@ -1,12 +1,36 @@
-// KING MD V4 - help.js - YOUR CHANNEL LINK AUTO-ADDED 👑
 const fs = require('fs');
 const path = require('path');
 
-async function helpCommand(sock, message, extra = {}) {
-    const from = message.key.remoteJid;
-    
-    const ownerName = "KING";
-    const version = "4.0.0";
+async function react(sock, msg, emoji) {
+  try {
+    await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } });
+  } catch (_) {}
+}
+
+async function getChannelJid(sock) {
+  const fallback = '120207367533840780@newsletter';
+  const invite = '0029Vb9AwScF6sn47ClubG1Z';
+  try {
+    const meta = await Promise.race([
+      sock.newsletterMetadata('invite', invite),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
+    ]);
+    if (meta && meta.id) return meta.id;
+  } catch (_) {}
+  return fallback;
+}
+
+module.exports = {
+  name: 'menu',
+  alias: ['help', 'commands', 'list'],
+  desc: 'Show KING MD menu',
+  category: 'general',
+  async execute(sock, msg, args, extra = {}) {
+    await react(sock, msg, '📜');
+    const from = msg.key.remoteJid;
+
+    const ownerName = 'KING';
+    const version = '4.0.0';
     const uptimeSec = Math.floor(process.uptime());
     const h = Math.floor(uptimeSec / 3600);
     const m = Math.floor((uptimeSec % 3600) / 60);
@@ -16,13 +40,7 @@ async function helpCommand(sock, message, extra = {}) {
     const ping = Math.floor(Math.random() * 30) + 10;
     const readMore = '\u200b'.repeat(4000);
 
-    // --- YOUR CHANNEL LINK HERE - BOT WILL AUTO GET JID ---
-    const channelInvite = '0029Vb9AwScF6sn47ClubG1Z'; // Your link: whatsapp.com/channel/0029Vb9AwScF6sn47ClubG1Z
-    let channelJid = '120207367533840780@newsletter'; // fallback
-    try {
-        const meta = await sock.newsletterMetadata('invite', channelInvite);
-        if (meta && meta.id) channelJid = meta.id;
-    } catch (e) {}
+    const channelJid = await getChannelJid(sock);
 
     const menuText = `╔═════════◇◆◇═════════╗
 ├▢ *𝗡𝗔𝗠𝗘: 🌐 𝗞𝗜𝗡𝗚 𝗠𝗗 ❤️‍🔥*
@@ -262,39 +280,45 @@ async function helpCommand(sock, message, extra = {}) {
 
     const installedCommands = Array.isArray(extra.commands) ? extra.commands : [];
     const installedText = installedCommands.length
-        ? `\n\n┏❐═══════════════════╗\n┃  𝗜𝗡𝗦𝗧𝗔𝗟𝗟𝗘𝗗 𝗖𝗢𝗠𝗠𝗔𝗡𝗗𝗦\n╠────────────────────╣\n${installedCommands.sort().map(name => `┃├▢ .${name}`).join('\n')}\n┗❐═══════════════════╝`
-        : '';
+      ? `\n\n┏❐═══════════════════╗\n┃  𝗜𝗡𝗦𝗧𝗔𝗟𝗟𝗘𝗗 𝗖𝗢𝗠𝗠𝗔𝗡𝗗𝗦\n╠────────────────────╣\n${installedCommands.sort().map(name => `┃├▢ .${name}`).join('\n')}\n┗❐═══════════════════╝`
+      : '';
     const finalMenuText = menuText + installedText;
 
-    const channelContext = {
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-            newsletterJid: channelJid,
-            newsletterName: 'KING MD 👑',
-            serverMessageId: 1
-        }
+    const contextInfo = {
+      forwardingScore: 999,
+      isForwarded: true,
+      forwardedNewsletterMessageInfo: {
+        newsletterJid: channelJid,
+        newsletterName: 'KING MD 👑',
+        serverMessageId: 1
+      }
     };
 
     const menuPaths = [
-        path.join(__dirname, '..', 'assets', 'menu.jpg'),
-        path.join(__dirname, '..', 'assets', 'menu.png'),
-        path.join(__dirname, '..', 'assets', 'menu.jpeg'),
+      path.join(__dirname, '..', 'assets', 'menu.jpg'),
+      path.join(__dirname, '..', 'assets', 'menu.png'),
+      path.join(__dirname, '..', 'assets', 'menu.jpeg')
     ];
 
     let menuImage = null;
     for (const p of menuPaths) {
-        if (fs.existsSync(p)) { menuImage = fs.readFileSync(p); break; }
+      if (fs.existsSync(p)) { menuImage = fs.readFileSync(p); break; }
     }
 
     try {
-        if (menuImage) {
-            await sock.sendMessage(from, { image: menuImage, caption: finalMenuText, contextInfo: channelContext });
-        } else {
-            await sock.sendMessage(from, { text: finalMenuText, contextInfo: channelContext });
-        }
+      if (menuImage) {
+        await sock.sendMessage(from, { image: menuImage, caption: finalMenuText, contextInfo });
+      } else {
+        await sock.sendMessage(from, { text: finalMenuText, contextInfo });
+      }
+      await react(sock, msg, '✅');
     } catch (e) {
+      try {
         await sock.sendMessage(from, { text: finalMenuText });
+        await react(sock, msg, '✅');
+      } catch (_) {
+        await react(sock, msg, '❌');
+      }
     }
-}
-module.exports = helpCommand;
+  }
+};
