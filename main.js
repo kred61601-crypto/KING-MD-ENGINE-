@@ -1,8 +1,4 @@
 'use strict';
-// KING MD - main.js - FULL FIXED ✅
-// Bot creates 8-char Manage Password, saves it, sends private welcome with assets/logo.jpg
-// App MUST accept this password - both use manage-passwords.json
-
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -26,7 +22,6 @@ const reactionsLib = safeRequire('./lib/reactions');
 
 console.log('[KING MD] Libs loaded - settings:', !!settings, 'config:', !!config);
 
-// ===== MANAGE PASSWORD - BOT CREATES IT =====
 const MANAGE_FILE = path.join(__dirname, 'manage-passwords.json');
 function makeManagePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -94,7 +89,6 @@ async function autoFollowChannel(sock) {
   } catch (e) { console.log('[KING MD] Auto-follow failed:', e.message); }
 }
 
-// ===== PRIVATE WELCOME - USES assets/ =====
 async function sendPrivateWelcome(sock, phone) {
   try {
     let saved = getManagePassword(phone);
@@ -135,16 +129,25 @@ sɪᴍᴘʟʏ ᴛʏᴘᴇ *.ᴘᴀssᴡᴏʀᴅ* ᴀɴᴅ ʏᴏᴜʀ ᴘᴀssᴡ
 *⚠️ 𝐒ᴇᴄᴜʀɪᴛʏ 𝐍ᴏᴛɪᴄᴇ*
 ᴋᴇᴇᴘ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴘʀɪᴠᴀᴛᴇ. ꜰᴏʀ ʏᴏᴜʀ sᴀꜰᴇᴛʏ, ɪᴛ ᴡɪʟʟ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴇxᴘɪʀᴇ ᴡʜᴇɴ ᴛʜɪs ʙᴏᴛ ʟᴏɢs ᴏᴜᴛ.
 ━━━━━━━━━━━━━━━━`;
-    const logoJpg = path.join(__dirname, 'assets', 'logo.jpg');
-    const logoPng = path.join(__dirname, 'assets', 'logo.png');
-    if (fs.existsSync(logoJpg)) await sock.sendMessage(sock.user.id, { image: fs.readFileSync(logoJpg), caption: welcome });
-    else if (fs.existsSync(logoPng)) await sock.sendMessage(sock.user.id, { image: fs.readFileSync(logoPng), caption: welcome });
-    else await sock.sendMessage(sock.user.id, { text: welcome });
+    const myJid = phone + '@s.whatsapp.net';
+    const imagePaths = [
+      path.join(__dirname, 'assets', 'welcome.jpg'),
+      path.join(__dirname, 'assets', 'welcome.png'),
+      path.join(__dirname, 'assets', 'welcome.jpeg'),
+      path.join(__dirname, 'assets', 'logo.jpg'),
+      path.join(__dirname, 'assets', 'logo.png'),
+      path.join(__dirname, 'assets', 'menu.jpg')
+    ];
+    let imageBuffer = null;
+    for (const p of imagePaths) {
+      if (fs.existsSync(p)) { imageBuffer = fs.readFileSync(p); break; }
+    }
+    if (imageBuffer) await sock.sendMessage(myJid, { image: imageBuffer, caption: welcome });
+    else await sock.sendMessage(myJid, { text: welcome });
     console.log('[KING MD] ✅ Private welcome sent to', phone);
   } catch (e) { console.log('[KING MD] Welcome failed:', e.message); }
 }
 
-// ===== COMMANDS =====
 const commandModules = new Map();
 const commandAliases = new Map();
 const commandDirectory = path.join(__dirname, 'commands');
@@ -160,8 +163,14 @@ function addCmd(name, mod, fileName = '') {
   const canonical = String(name || fileName).toLowerCase().replace(/\.js$/i, '').trim();
   if (!canonical) return false;
   commandModules.set(canonical, handler);
-  const aliases = Array.isArray(mod?.aliases) ? mod.aliases : Array.isArray(handler.aliases) ? handler.aliases : [];
-  for (const alias of aliases) { const key = String(alias).toLowerCase().trim(); if (key && !commandAliases.has(key)) commandAliases.set(key, canonical); }
+  const rawAliases = [];
+  if (Array.isArray(mod?.aliases)) rawAliases.push(...mod.aliases);
+  if (Array.isArray(mod?.alias)) rawAliases.push(...mod.alias);
+  if (typeof mod?.alias === 'string') rawAliases.push(mod.alias);
+  if (Array.isArray(handler?.aliases)) rawAliases.push(...handler.aliases);
+  if (Array.isArray(handler?.alias)) rawAliases.push(...handler.alias);
+  if (typeof handler?.alias === 'string') rawAliases.push(handler.alias);
+  for (const alias of rawAliases) { const key = String(alias).toLowerCase().trim(); if (key && !commandAliases.has(key)) commandAliases.set(key, canonical); }
   return true;
 }
 function loadCommands() {
@@ -190,7 +199,6 @@ async function runCommand(sock, message) {
   const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
   const requestedName = (parts.shift() || '').toLowerCase();
   if (!requestedName) return;
-  // .password - ONLY private, sends SAME password bot created
   if (requestedName === 'password') {
     const from = message.key.remoteJid;
     const isPrivate = !from.endsWith('@g.us') && !from.endsWith('@newsletter');
@@ -208,11 +216,15 @@ async function runCommand(sock, message) {
   const extra = { text: rawText, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch, command: cmdName, prefix, commands: [...commandModules.keys()], downloadMediaMessage: baileys.downloadMediaMessage };
   if (!handler) { await sock.sendMessage(from, { text: `❌ Unknown command: *${requestedName}*\n\nSend *.menu* to see the commands currently installed.` }, { quoted: message }).catch(() => {}); return; }
   console.log('[KING MD] Running:', cmdName);
-  try { if (cmdName === 'song') await handler(sock, from, message, extra); else await handler(sock, message, extra); }
+  try {
+    if (cmdName === 'song') await handler(sock, from, message, extra);
+    else if (handler.length >= 4) await handler(sock, message, args, extra);
+    else if (handler.length === 3) await handler(sock, message, extra);
+    else await handler(sock, message, args, extra);
+  }
   catch (error) { console.error(`[KING MD] Command .${cmdName} failed:`, error.stack || error.message); await sock.sendMessage(from, { text: `❌ *KING MD*\nThe .${cmdName} command failed. Please try again later.` }, { quoted: message }).catch(() => {}); }
 }
 
-// ===== PAIRING ENGINE =====
 const sessions = new Map();
 const pending = new Map();
 const phoneDigits = v => String(v || '').replace(/\D/g, '');
@@ -281,19 +293,15 @@ async function resolveChannelJid(sock, link) {
   return { invite: id };
 }
 
-// ===== WEB ROUTES =====
 app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p><p>Bots: ${sessions.size}</p>`));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size, uptime: Math.floor(process.uptime()) }));
 app.get('/api/pair', (_req, res) => res.json({ success: false, error: 'Use POST /api/pair' }));
 
-// ===== MANAGE LOGIN - APP CALLS THIS - MUST ACCEPT BOT PASSWORD =====
-// NO bridgeAuth here - bot password IS the auth. App user does not have bridge key.
 app.post('/api/manage-login', async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber || req.body?.botNumber || req.body?.number);
   const password = String(req.body?.password || '').trim();
   if (!phone || !password) return res.status(400).json({ success: false, error: 'Enter bot number and password' });
   const saved = getManagePassword(phone);
-  // ALSO accept if password matches any saved (in case number format differs)
   let found = saved;
   if (!found) {
     const all = loadManagePasswords();
@@ -305,7 +313,6 @@ app.post('/api/manage-login', async (req, res) => {
   }
   return res.status(401).json({ success: false, error: 'Wrong bot number or password', attemptsLeft: 4 });
 });
-// Alias for old App that still calls /api/managebot/login - SAME CHECK
 app.post('/api/managebot/login', async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber || req.body?.botNumber);
   const password = String(req.body?.password || '').trim();
