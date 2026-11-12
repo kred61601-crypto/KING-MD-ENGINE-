@@ -112,7 +112,7 @@ async function sendPrivateWelcome(sock, phone) {
 └➤ \`${password}\`
 
 *🌐 Bot Control Panel*
-└➤ ${WEBSITE || 'https://your-kingmd-panel/settings'}
+└➤ ${WEBSITE || 'https://king-md-v1-51j8.onrender.com/settings'}
 ━━━━━━━━━━━━━━━━
 
 *📍 How to Manage Your Bot*
