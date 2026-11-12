@@ -1,3 +1,7 @@
+'use strict';
+// KING MD - commands/channelstatus.js - FRESH FIXED
+// Post text / photo / video to any channel
+
 async function react(sock, msg, emoji) {
   try {
     await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } });
@@ -33,7 +37,7 @@ async function downloadQuoted(sock, msg, extra) {
   try {
     const { quoted, participant, stanzaId } = getQuoted(msg);
     if (!quoted) return null;
-    const download = extra.downloadMediaMessage;
+    const download = extra.downloadMediaMessage || sock.downloadMediaMessage?.bind(sock);
     if (!download) return null;
     const fake = { key: { remoteJid: msg.key.remoteJid, id: stanzaId, participant, fromMe: false }, message: quoted };
     const buffer = await download(fake);
@@ -48,12 +52,14 @@ async function downloadQuoted(sock, msg, extra) {
 async function downloadOwnMedia(sock, msg, extra) {
   try {
     const m = msg.message || {};
+    const download = extra.downloadMediaMessage || sock.downloadMediaMessage?.bind(sock);
+    if (!download) return null;
     if (m.videoMessage) {
-      const buf = await extra.downloadMediaMessage(msg);
+      const buf = await download(msg);
       return { type: 'video', buffer: buf, caption: m.videoMessage.caption || '' };
     }
     if (m.imageMessage) {
-      const buf = await extra.downloadMediaMessage(msg);
+      const buf = await download(msg);
       return { type: 'image', buffer: buf, caption: m.imageMessage.caption || '' };
     }
     return null;
@@ -67,7 +73,7 @@ module.exports = {
   category: 'general',
   async execute(sock, msg, args, extra = {}) {
     await react(sock, msg, '📢');
-    const from = msg.key.remoteJid;
+    const from = extra.from || msg.key.remoteJid;
     let fullText = args.join(' ').trim();
 
     const ownMedia = await downloadOwnMedia(sock, msg, extra);
@@ -144,7 +150,7 @@ module.exports = {
       } else {
         await sock.sendMessage(channelJid, { text: postText + footer });
       }
-      await sock.sendMessage(from, { text: `*Posted to Channel ✅*\n\nType: ${media ? media.type : 'text'}\nCaption: ${postText || 'No caption'}\n\nIt will show in Updates like TEAM ARSLAN.` }, { quoted: msg });
+      await sock.sendMessage(from, { text: `*Posted to Channel ✅*\n\nType: ${media ? media.type : 'text'}\nCaption: ${postText || 'No caption'}` }, { quoted: msg });
       await react(sock, msg, '✅');
     } catch (e) {
       await sock.sendMessage(from, { text: `Could not post. Add bot as Admin of that channel first.\nError: ${e.message}` }, { quoted: msg });
