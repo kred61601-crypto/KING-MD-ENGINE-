@@ -1,8 +1,6 @@
 'use strict';
-// KING MD - commands/channelstatus.js - REPLY VERSION
+// KING MD - commands/channelstatus.js - REPLY VERSION - FIXED FOR BAILEYS
 // Reply to ANYTHING with: .channelstatus <channel link>
-// Reply to photo/video/text with: .channelstatus https://whatsapp.com/channel/CODE
-// Or just: .channelstatus Hello KING (posts to default channel)
 
 async function react(sock, msg, emoji) {
   try { await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } }); } catch (_) {}
@@ -10,7 +8,6 @@ async function react(sock, msg, emoji) {
 
 async function resolveChannelJid(sock, link) {
   let raw = String(link || '').trim();
-  // Extract code from full link: whatsapp.com/channel/CODE
   const m = raw.match(/whatsapp\.com\/channel\/([A-Za-z0-9_-]+)/);
   if (m) raw = m[1];
   else if (raw.includes('/channel/')) raw = raw.split('/channel/')[1].split(/[?\/\s]/)[0];
@@ -28,12 +25,26 @@ async function resolveChannelJid(sock, link) {
   return null;
 }
 
+// --- THE FIX: Send to channel the CORRECT Baileys way ---
+async function sendToChannel(sock, channelJid, content) {
+  // Method 1: newsletterSendMessage (Baileys 6.x - correct for channels)
+  if (typeof sock.newsletterSendMessage === 'function') {
+    return await sock.newsletterSendMessage(channelJid, content, {});
+  }
+  // Method 2: newsletterSendMsg (some forks)
+  if (typeof sock.newsletterSendMsg === 'function') {
+    return await sock.newsletterSendMsg(channelJid, content, {});
+  }
+  // Method 3: old sendMessage fallback
+  return await sock.sendMessage(channelJid, content);
+}
+
 function getQuoted(msg) {
   const ctx = msg.message?.extendedTextMessage?.contextInfo
     || msg.message?.imageMessage?.contextInfo
     || msg.message?.videoMessage?.contextInfo
     || {};
-  return { quoted: ctx.quotedMessage || null, participant: ctx.participant || null, stanzaId: ctx.stanzaId || null, ctx };
+  return { quoted: ctx.quotedMessage || null, participant: ctx.participant || null, stanzaId: ctx.stanzaId || null };
 }
 
 function getQuotedText(quoted) {
@@ -82,8 +93,6 @@ module.exports = {
     const from = extra.from || msg.key.remoteJid;
     let fullText = args.join(' ').trim();
 
-    // --- 1. FIND CHANNEL LINK in args ---
-    // Supports: full link, just CODE, or "link | caption"
     let channelLink = extra.channelInvite || extra.channel || process.env.CHANNEL_INVITE || '0029Vb9AwScF6sn47ClubG1Z';
     let postText = fullText;
 
@@ -95,45 +104,28 @@ module.exports = {
       const parts = fullText.split('|');
       channelLink = parts[0].trim();
       postText = parts.slice(1).join('|').trim();
-    } else if (/^[A-Za-z0-9_-]{15,}$/.test(args[0] || '') && args.length >= 1 && !postText.includes(' ')) {
-      // Just a CODE alone: .channelstatus 0029Vb9...
+    } else if (/^[A-Za-z0-9_-]{15,}$/.test(args[0] || '') && !postText.includes(' ')) {
       channelLink = args[0];
       postText = '';
     }
 
-    // --- 2. GET REPLIED THING ---
     const { quoted } = getQuoted(msg);
     const quotedText = getQuotedText(quoted);
     const ownMedia = await downloadOwnMedia(sock, msg, extra);
     const quotedMedia = !ownMedia ? await downloadQuotedMedia(sock, msg, extra) : null;
     const media = ownMedia || quotedMedia;
 
-    // If user replied and didn't type a caption, use the replied text/caption
     if (!postText) {
       if (media?.caption) postText = media.caption.replace(/^\.(channelstatus|cstatus|channelpost|cpost|chstatus)\s*/i, '').trim();
       else if (quotedText) postText = quotedText;
     }
-    // If own media caption contains command, clean it
     if (media && postText) postText = postText.replace(/^\.(channelstatus|cstatus|channelpost|cpost|chstatus)\s*/i, '').trim();
 
     if (!postText && !media) {
       await sock.sendMessage(from, {
-        text: `*CHANNEL STATUS 📢*\n\n*Reply to ANYTHING:*\nReply to photo/video/text with:\n.channelstatus https://whatsapp.com/channel/CODE\n\n*Or post new text:*\n.channelstatus Hello KING 👑\n\n*Or post to your channel + caption:*\n.channelstatus https://whatsapp.com/channel/CODE | Hello 🔥\n\n*View channel:*\n.channelstatus view https://whatsapp.com/channel/CODE`
+        text: `*CHANNEL STATUS 📢*\n\n*Reply to ANYTHING:*\nReply to photo/video/text with:\n.channelstatus https://whatsapp.com/channel/CODE\n\n*Or post new text:*\n.channelstatus Hello KING 👑`
       }, { quoted: msg });
       await react(sock, msg, '✅');
-      return;
-    }
-
-    if (postText.toLowerCase().startsWith('view ')) {
-      const link = postText.slice(5).trim();
-      const jid = await resolveChannelJid(sock, link);
-      if (!jid) { await sock.sendMessage(from, { text: 'Channel not found.' }, { quoted: msg }); await react(sock, msg, '❌'); return; }
-      try {
-        const feed = await sock.newsletterFetch(jid);
-        const last = feed?.messages?.[0]?.message?.conversation || feed?.messages?.[0]?.message?.extendedTextMessage?.text || 'Photo/Video post';
-        await sock.sendMessage(from, { text: `*Channel:* ${feed?.metadata?.name || 'Channel'}\n*Latest:*\n${last}` }, { quoted: msg });
-        await react(sock, msg, '✅');
-      } catch (_) { await sock.sendMessage(from, { text: 'Could not fetch. Make bot follow that channel.' }, { quoted: msg }); await react(sock, msg, '❌'); }
       return;
     }
 
@@ -146,15 +138,16 @@ module.exports = {
 
     const footer = '\n\n> 👑 KING MD 👑';
     try {
-      if (media?.type === 'video') await sock.sendMessage(channelJid, { video: media.buffer, caption: (postText || 'KING MD 👑') + footer });
-      else if (media?.type === 'image') await sock.sendMessage(channelJid, { image: media.buffer, caption: (postText || 'KING MD 👑') + footer });
-      else if (media?.type === 'document') await sock.sendMessage(channelJid, { document: media.buffer, fileName: 'file', caption: postText + footer });
-      else await sock.sendMessage(channelJid, { text: postText + footer });
+      if (media?.type === 'video') await sendToChannel(sock, channelJid, { video: media.buffer, caption: (postText || 'KING MD 👑') + footer });
+      else if (media?.type === 'image') await sendToChannel(sock, channelJid, { image: media.buffer, caption: (postText || 'KING MD 👑') + footer });
+      else if (media?.type === 'document') await sendToChannel(sock, channelJid, { document: media.buffer, fileName: 'file', caption: postText + footer });
+      else await sendToChannel(sock, channelJid, { text: postText + footer });
 
       await sock.sendMessage(from, { text: `*Posted to Channel ✅*\n\nType: ${media ? media.type : 'text'}\nCaption: ${postText || 'No caption'}` }, { quoted: msg });
       await react(sock, msg, '✅');
     } catch (e) {
-      await sock.sendMessage(from, { text: `Could not post. Add bot as Admin of that channel first.\nError: ${e.message}` }, { quoted: msg });
+      console.log('[channelstatus] real error:', e);
+      await sock.sendMessage(from, { text: `Could not post.\nReal Error: ${e.message}\n\nBot is Admin already, so this is Baileys error, not admin. Tell KING what this error says.` }, { quoted: msg });
       await react(sock, msg, '❌');
     }
   }
