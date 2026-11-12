@@ -25,6 +25,36 @@ const isAdmin = safeRequire('./lib/isAdmin');
 const antilinkLib = safeRequire('./lib/antilink');
 const antibadwordLib = safeRequire('./lib/antibadword');
 const reactionsLib = safeRequire('./lib/reactions');
+const antilinkSettingsFile = path.join(__dirname, 'data', 'antilink.json');
+const antideleteSettingsFile = path.join(__dirname, 'data', 'antidelete.json');
+const recentMessages = new Map();
+function readJsonObject(file) { try { const value = JSON.parse(fs.readFileSync(file, 'utf8')); return value && typeof value === 'object' ? value : {}; } catch (_) { return {}; } }
+function getTextFromMessage(message) { const m = message?.message || {}; return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || ''; }
+async function isGroupAdmin(sock, jid, participant) { try { const md = await sock.groupMetadata(jid); return (md.participants || []).some(p => p.id === participant && (p.admin === 'admin' || p.admin === 'superadmin')); } catch (_) { return false; } }
+async function processGroupProtection(sock, message) {
+  const jid = message?.key?.remoteJid; if (!jid || !jid.endsWith('@g.us') || message.key.fromMe) return;
+  const sender = message.key.participant || ''; const text = getTextFromMessage(message);
+  if (text) {
+    const anti = readJsonObject(antilinkSettingsFile);
+    if (anti[jid] && /(https?:\/\/|www\.|chat\.whatsapp\.com\/|whatsapp\.com\/channel\/)/i.test(text) && !(await isGroupAdmin(sock, jid, sender))) {
+      try { await sock.sendMessage(jid, { delete: message.key }); await sock.sendMessage(jid, { text: '🔗 Link removed by KING MD (antilink).' }); } catch (e) { console.error('[KING MD] Antilink delete failed:', e.message); }
+      return;
+    }
+  }
+  const id = message.key.id; if (id) { recentMessages.set(id, { jid, sender, message: message.message, text, at: Date.now() }); if (recentMessages.size > 1500) recentMessages.delete(recentMessages.keys().next().value); }
+}
+async function processAntiDelete(sock, message) {
+  const protocol = message?.message?.protocolMessage; if (!protocol) return;
+  const type = protocol.type; const isRevoke = type === 0 || type === 'REVOKE' || String(type).toUpperCase().includes('REVOKE');
+  if (!isRevoke) return;
+  const target = protocol.key; if (!target?.id) return;
+  const old = recentMessages.get(target.id); if (!old) return;
+  const enabled = readJsonObject(antideleteSettingsFile); if (!enabled[old.jid]) return;
+  const who = old.sender ? `@${old.sender.split('@')[0]}` : 'Unknown';
+  const body = old.text || (old.message?.imageMessage ? '[Image]' : old.message?.videoMessage ? '[Video]' : old.message?.audioMessage ? '[Audio]' : old.message?.documentMessage ? '[Document]' : '[Message content unavailable]');
+  try { await sock.sendMessage(old.jid, { text: `🗑️ *KING MD ANTIDELETE*\nDeleted by: ${who}\n\n${String(body).slice(0, 3500)}`, mentions: old.sender ? [old.sender] : [] }); } catch (e) { console.error('[KING MD] Antidelete notify failed:', e.message); }
+  recentMessages.delete(target.id);
+}
 
 console.log('[KING MD] Libs loaded - settings:', !!settings, 'config:', !!config);
 
@@ -55,9 +85,9 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
 function makeKingCode() {
-  let d1 = String(Math.floor(Math.random() * 10));
-  let d2 = String(Math.floor(Math.random() * 10));
-  while (d1 === d2) { d2 = String(Math.floor(Math.random() * 10)); }
+  const d1 = crypto.randomInt(0, 10);
+  let d2 = crypto.randomInt(0, 10);
+  while (d1 === d2) d2 = crypto.randomInt(0, 10);
   return `KINGMD${d1}${d2}`;
 }
 
@@ -73,104 +103,12 @@ async function autoFollowChannel(sock) {
   } catch (e) { console.log('[KING MD] Auto-follow failed:', e.message); }
 }
 
-// ===== 3. COMMANDS =====
+// ===== 3. COMMANDS (AUTO-DISCOVERY) =====
+// Every .js file placed in ./commands is loaded automatically.
+// New commands do not need another addCmd(...) line in this file.
 const commandModules = new Map();
-function addCmd(name, mod) { if (mod) commandModules.set(name, mod); }
-addCmd('tagall', safeRequire('./commands/tagall'));
-addCmd('help', safeRequire('./commands/help'));
-addCmd('menu', safeRequire('./commands/help'));
-addCmd('ban', safeRequire('./commands/ban'));
-addCmd('promote', safeRequire('./commands/promote'));
-addCmd('anticall', safeRequire('./commands/anticall'));
-addCmd('kickall', safeRequire('./commands/kickall'));
-addCmd('autorecording', safeRequire('./commands/autorecording'));
-addCmd('pair', safeRequire('./commands/pair'));
-addCmd('demote', safeRequire('./commands/demote'));
-addCmd('mute', safeRequire('./commands/mute'));
-addCmd('unmute', safeRequire('./commands/unmute'));
-addCmd('sticker', safeRequire('./commands/sticker'));
-addCmd('save', safeRequire('./commands/save'));
-addCmd('warn', safeRequire('./commands/warn'));
-addCmd('warnings', safeRequire('./commands/warnings'));
-addCmd('tts', safeRequire('./commands/tts'));
-addCmd('tictactoe', safeRequire('./commands/tictactoe'));
-addCmd('setbotbio', safeRequire('./commands/setbotbio'));
-addCmd('topmembers', safeRequire('./commands/topmembers'));
-addCmd('owner', safeRequire('./commands/owner'));
-addCmd('delete', safeRequire('./commands/delete'));
-addCmd('antilink', safeRequire('./commands/antilink'));
-addCmd('meme', safeRequire('./commands/meme'));
-addCmd('tag', safeRequire('./commands/tag'));
-addCmd('joke', safeRequire('./commands/joke'));
-addCmd('quote', safeRequire('./commands/quote'));
-addCmd('fact', safeRequire('./commands/fact'));
-addCmd('weather', safeRequire('./commands/weather'));
-addCmd('news', safeRequire('./commands/news'));
-addCmd('kick', safeRequire('./commands/kick'));
-addCmd('simage', safeRequire('./commands/simage'));
-addCmd('attp', safeRequire('./commands/attp'));
-addCmd('hangman', safeRequire('./commands/hangman'));
-addCmd('trivia', safeRequire('./commands/trivia'));
-addCmd('compliment', safeRequire('./commands/compliment'));
-addCmd('insult', safeRequire('./commands/insult'));
-addCmd('eightball', safeRequire('./commands/eightball'));
-addCmd('lyrics', safeRequire('./commands/lyrics'));
-addCmd('dare', safeRequire('./commands/dare'));
-addCmd('truth', safeRequire('./commands/truth'));
-addCmd('clear', safeRequire('./commands/clear'));
-addCmd('ping', safeRequire('./commands/ping'));
-addCmd('alive', safeRequire('./commands/alive'));
-addCmd('img-blur', safeRequire('./commands/img-blur'));
-addCmd('welcome', safeRequire('./commands/welcome'));
-addCmd('goodbye', safeRequire('./commands/goodbye'));
-addCmd('github', safeRequire('./commands/github'));
-addCmd('antibadword', safeRequire('./commands/antibadword'));
-addCmd('groupmanage', safeRequire('./commands/groupmanage'));
-addCmd('multiplugin', safeRequire('./commands/multiplugin'));
-addCmd('pmpermit', safeRequire('./commands/pmpermit'));
-addCmd('chatbot', safeRequire('./commands/chatbot'));
-addCmd('savecontact', safeRequire('./commands/savecontact'));
-addCmd('creategc', safeRequire('./commands/creategc'));
-addCmd('take', safeRequire('./commands/take'));
-addCmd('flirt', safeRequire('./commands/flirt'));
-addCmd('character', safeRequire('./commands/character'));
-addCmd('wasted', safeRequire('./commands/wasted'));
-addCmd('ship', safeRequire('./commands/ship'));
-addCmd('groupinfo', safeRequire('./commands/groupinfo'));
-addCmd('resetlink', safeRequire('./commands/resetlink'));
-addCmd('staff', safeRequire('./commands/staff'));
-addCmd('unban', safeRequire('./commands/unban'));
-addCmd('emojimix', safeRequire('./commands/emojimix'));
-addCmd('viewonce', safeRequire('./commands/viewonce'));
-addCmd('clearsession', safeRequire('./commands/clearsession'));
-addCmd('autostatus', safeRequire('./commands/autostatus'));
-addCmd('simp', safeRequire('./commands/simp'));
-addCmd('block', safeRequire('./commands/block'));
-addCmd('stupid', safeRequire('./commands/stupid'));
-addCmd('stickertelegram', safeRequire('./commands/stickertelegram'));
-addCmd('textmaker', safeRequire('./commands/textmaker'));
-addCmd('antidelete', safeRequire('./commands/antidelete'));
-addCmd('cleartmp', safeRequire('./commands/cleartmp'));
-addCmd('setpp', safeRequire('./commands/setpp'));
-addCmd('instagram', safeRequire('./commands/instagram'));
-addCmd('facebook', safeRequire('./commands/facebook'));
-addCmd('play', safeRequire('./commands/play'));
-addCmd('tiktok', safeRequire('./commands/tiktok'));
-addCmd('send', safeRequire('./commands/send'));
-addCmd('song', safeRequire('./commands/song'));
-addCmd('ai', safeRequire('./commands/ai'));
-addCmd('translate', safeRequire('./commands/translate'));
-addCmd('ss', safeRequire('./commands/ss'));
-addCmd('goodnight', safeRequire('./commands/goodnight'));
-addCmd('shayari', safeRequire('./commands/shayari'));
-addCmd('roseday', safeRequire('./commands/roseday'));
-addCmd('imagine', safeRequire('./commands/imagine'));
-addCmd('video', safeRequire('./commands/video'));
-addCmd('autotyping', safeRequire('./commands/autotyping'));
-addCmd('online', safeRequire('./commands/online'));
-addCmd('channelreact', safeRequire('./commands/channelreact'));
-
-console.log('[KING MD] Commands loaded:', [...commandModules.keys()].join(', '));
+const commandAliases = new Map();
+const commandDirectory = path.join(__dirname, 'commands');
 
 function resolveCommandHandler(mod) {
   if (typeof mod === 'function') return mod;
@@ -180,27 +118,101 @@ function resolveCommandHandler(mod) {
   }
   return null;
 }
-async function runCommand(sock, message) {
-  const text = message.message?.conversation || message.message?.extendedTextMessage?.text || message.message?.imageMessage?.caption || message.message?.videoMessage?.caption || "";
-  if (!text) return;
-  const trimmed = text.trim();
-  const isCommand = trimmed.startsWith('.') || trimmed.startsWith('!');
-  if (!isCommand) return;
-  const from = message.key.remoteJid;
-  const parts = trimmed.split(/\s+/);
-  const cmdName = parts[0].toLowerCase().replace(/^[.!]/, '');
-  const args = parts.slice(1);
-  if (!cmdName) return;
-  if (cmdName === 'ping' && !commandModules.has('ping')) { await sock.sendMessage(from, { text: '*KING MD* Pong! 👑' }); return; }
-  if (cmdName === 'alive' && !commandModules.has('alive')) { await sock.sendMessage(from, { text: `*KING MD BOT* 👑\n\n.ping - Check bot\n.menu - Menu\n\nChannel: ${CHANNEL}\nWebsite: ${WEBSITE}` }); return; }
-  const handler = resolveCommandHandler(commandModules.get(cmdName));
-  if (!handler) { console.log('[KING MD] No handler for:', cmdName); return; }
-  console.log('[KING MD] Running:', cmdName);
-  try { await handler(sock, message, { text, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch }); }
-  catch (e1) {
-    try { await handler(sock, message); }
-    catch (e2) { await sock.sendMessage(from, { text: 'Error in .' + cmdName + ' ❌' }).catch(()=>{}); }
+
+function addCmd(name, mod, fileName = '') {
+  const handler = resolveCommandHandler(mod);
+  if (!handler) return false;
+  const canonical = String(name || fileName).toLowerCase().replace(/\.js$/i, '').trim();
+  if (!canonical) return false;
+  commandModules.set(canonical, handler);
+  const aliases = Array.isArray(mod?.aliases) ? mod.aliases : Array.isArray(handler.aliases) ? handler.aliases : [];
+  for (const alias of aliases) {
+    const key = String(alias).toLowerCase().trim();
+    if (key && !commandAliases.has(key)) commandAliases.set(key, canonical);
   }
+  return true;
+}
+
+function loadCommands() {
+  let files = [];
+  try {
+    files = fs.readdirSync(commandDirectory)
+      .filter(file => file.endsWith('.js') && file !== '.js')
+      .sort();
+  } catch (error) {
+    console.error('[KING MD] Cannot read commands directory:', error.message);
+    return;
+  }
+  for (const file of files) {
+    const commandName = path.basename(file, '.js').toLowerCase();
+    try {
+      const absolutePath = path.join(commandDirectory, file);
+      delete require.cache[require.resolve(absolutePath)];
+      const mod = require(absolutePath);
+      if (!addCmd(commandName, mod, file)) {
+        console.warn(`[KING MD] Skipped ${file}: no exported command handler`);
+      }
+    } catch (error) {
+      console.error(`[KING MD] Failed loading ${file}:`, error.message);
+    }
+  }
+  // Friendly built-in aliases.
+  for (const [alias, target] of Object.entries({ menu: 'help', ply: 'play', pl: 'play', vv: 'viewonce', '8ball': 'eightball' })) {
+    if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
+  }
+  console.log(`[KING MD] Auto-loaded ${commandModules.size} commands: ${[...commandModules.keys()].join(', ')}`);
+}
+loadCommands();
+
+function getMessageText(message) {
+  const msg = message?.message || {};
+  return msg.conversation || msg.extendedTextMessage?.text ||
+    msg.imageMessage?.caption || msg.videoMessage?.caption ||
+    msg.documentMessage?.caption || msg.buttonsResponseMessage?.selectedButtonId ||
+    msg.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+}
+
+async function runCommand(sock, message) {
+  const rawText = getMessageText(message);
+  if (!rawText || !message?.key?.remoteJid || message.key.fromMe) return;
+  const trimmed = rawText.trim();
+  const configuredPrefix = String(config?.prefix || settings?.prefix || '.');
+  const prefixes = [...new Set([configuredPrefix, '.', '!'].filter(Boolean))];
+  const prefix = prefixes.find(value => trimmed.startsWith(value));
+  if (!prefix) return;
+
+  const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
+  const requestedName = (parts.shift() || '').toLowerCase();
+  if (!requestedName) return;
+  const cmdName = commandAliases.get(requestedName) || requestedName;
+  const handler = commandModules.get(cmdName);
+  const from = message.key.remoteJid;
+  const args = parts;
+  const extra = {
+    text: rawText, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE,
+    website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch,
+    command: cmdName, prefix, commands: [...commandModules.keys()], downloadMediaMessage: baileys.downloadMediaMessage
+  };
+
+  if (!handler) {
+    await sock.sendMessage(from, {
+      text: `❌ Unknown command: *${requestedName}*\n\nSend *.menu* to see the commands currently installed.`
+    }, { quoted: message }).catch(() => {});
+    return;
+  }
+
+  console.log('[KING MD] Running:', cmdName);
+  try {
+    if (typeof sock.sendPresenceUpdate === 'function') await sock.sendPresenceUpdate('composing', from).catch(() => {});
+    // song.js uses the legacy (sock, chatId, message, extra) signature.
+    if (cmdName === 'song') await handler(sock, from, message, extra);
+    else await handler(sock, message, extra);
+  } catch (error) {
+    console.error(`[KING MD] Command .${cmdName} failed:`, error.stack || error.message || error);
+    await sock.sendMessage(from, {
+      text: `❌ *KING MD*\nThe .${cmdName} command failed. Please try again later.`
+    }, { quoted: message }).catch(() => {});
+  } finally { if (typeof sock.sendPresenceUpdate === 'function') await sock.sendPresenceUpdate('paused', from).catch(() => {}); }
 }
 
 // ===== 4. PAIRING ENGINE =====
@@ -228,7 +240,7 @@ async function startSocket(phone, opts = {}) {
     if (!Array.isArray(messages)) return;
     for (const message of messages) {
       if (!message?.key?.remoteJid || !message.message) continue;
-      try { await runCommand(sock, message); } catch (e) { console.error(e.message); }
+      try { await processAntiDelete(sock, message); await processGroupProtection(sock, message); await runCommand(sock, message); } catch (e) { console.error('[KING MD] Message handler:', e.stack || e.message); }
     }
   });
   sock.ev.on('connection.update', update => {
@@ -236,6 +248,9 @@ async function startSocket(phone, opts = {}) {
     if (update.connection === 'open') {
         entry.connected = true; entry.pairing = false; entry.code = null; entry.kingCode = null; entry.loggedOut = false; entry.reconnectAttempts = 0;
         console.log('[KING MD] OPEN:', phone);
+        if (typeof sock.sendPresenceUpdate === 'function') sock.sendPresenceUpdate('available').catch(() => {});
+        const ownerDigits = String(config?.ownerNumber || config?.phoneNumber || '').replace(/\D/g, '');
+        if (ownerDigits) sock.sendMessage(`${ownerDigits}@s.whatsapp.net`, { text: '👑 *KING MD IS ACTIVE* 🟢\nWhatsApp connection is ready.\nType *.menu* in any chat to view the commands currently installed.' }).catch(e => console.log('[KING MD] Owner active notice skipped:', e.message));
         autoFollowChannel(sock);
     }
     if (update.connection === 'close') {
@@ -301,7 +316,7 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
   if (pending.has(phone)) {
     try {
       const r = await pending.get(phone);
-      return res.json({ success: true, pairingCode: r.code, kingCode: r.kingCode, displayCode: r.kingCode, state: stateFor(phone) });
+      return res.json({ success: true, pairingCode: r.code, kingCode: r.kingCode, kingMdCode: r.kingCode, displayCode: r.kingCode, state: stateFor(phone) });
     } catch (e) { return res.status(502).json({ success: false, error: e.message }); }
   }
   const task = (async () => {
@@ -318,7 +333,7 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
   pending.set(phone, task);
   try {
     const r = await task;
-    return res.json({ success: true, pairingCode: r.code, kingCode: r.kingCode, displayCode: r.kingCode, state: stateFor(phone) });
+    return res.json({ success: true, pairingCode: r.code, kingCode: r.kingCode, kingMdCode: r.kingCode, displayCode: r.kingCode, state: stateFor(phone) });
   } catch (e) { return res.status(502).json({ success: false, error: e.message }); }
   finally { pending.delete(phone); }
 });
