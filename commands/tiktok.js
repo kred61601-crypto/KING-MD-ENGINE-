@@ -55,40 +55,44 @@ async function getDownload(url, axios) {
   throw new Error(errors.join('; ').slice(0, 350) || 'TikTok download services did not return a video');
 }
 
-async function handler(sock, message, extra = {}) {
-  const chat = extra.from || message.key.remoteJid;
-  const axios = extra.axios || axiosDefault;
-  const fetch = extra.fetch || fetchDefault;
-  const argsText = (extra.args || []).join(' ') || extra.text || message.message?.conversation || message.message?.extendedTextMessage?.text || '';
-  const url = extractTikTokUrl(argsText);
-  if (!url) return sock.sendMessage(chat, { text: '📥 *KING MD TIKTOK DOWNLOADER*\nSend a valid TikTok video link.\nExample: .tiktok https://www.tiktok.com/@user/video/123456789' }, { quoted: message });
-  const id = message.key?.id;
-  if (id && seen.has(id)) return;
-  if (id) { seen.add(id); setTimeout(() => seen.delete(id), 3 * 60 * 1000); }
-  try {
-    await sock.sendMessage(chat, { react: { text: '⏳', key: message.key } }).catch(() => {});
-    const resolved = await resolveUrl(url, axios, fetch);
-    const result = await getDownload(resolved, axios);
-    const caption = `👑 *DOWNLOADED BY ${String(extra.config?.botName || 'KING MD').toUpperCase()}*\n${result.title || ''}`.trim();
-    if (result.images?.length) {
-      for (const imageUrl of result.images.slice(0, 8)) await sock.sendMessage(chat, { image: { url: imageUrl }, caption }, { quoted: message });
-      if (result.audio) await sock.sendMessage(chat, { audio: { url: result.audio }, mimetype: 'audio/mpeg', fileName: 'tiktok-audio.mp3' }, { quoted: message });
-    } else {
-      const response = await axios.get(result.video, { responseType: 'arraybuffer', timeout: 90000, maxContentLength: 70 * 1024 * 1024, maxBodyLength: 70 * 1024 * 1024, headers: { 'User-Agent': UA, Referer: 'https://www.tiktok.com/' } });
-      const buffer = Buffer.from(response.data);
-      if (!buffer.length) throw new Error('The download service returned an empty file');
-      if (buffer.length > 70 * 1024 * 1024) throw new Error('Video is too large (70 MB limit)');
-      const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
-      if (contentType.includes('text/html') || contentType.includes('application/json')) throw new Error('Download service returned a webpage instead of a video');
-      await sock.sendMessage(chat, { video: buffer, mimetype: 'video/mp4', caption }, { quoted: message });
+module.exports = {
+  name: 'tiktok',
+  aliases: ['tt', 'tik'],
+  description: 'Download public TikTok videos and photo posts',
+  category: 'download',
+  async execute(sock, msg, args, extra = {}) {
+    const chat = extra.from || msg.key.remoteJid;
+    const axios = extra.axios || axiosDefault;
+    const fetch = extra.fetch || fetchDefault;
+    // FRESH: args is real args now, not extra
+    const argsText = (args || []).join(' ').trim() || (extra.text || '').replace(/^[.!]tiktok\s+/i, '').trim() || msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+    const url = extractTikTokUrl(argsText);
+    if (!url) return sock.sendMessage(chat, { text: '📥 *KING MD TIKTOK DOWNLOADER*\nSend a valid TikTok video link.\nExample: .tiktok https://www.tiktok.com/@user/video/123456789' }, { quoted: msg });
+    const id = msg.key?.id;
+    if (id && seen.has(id)) return;
+    if (id) { seen.add(id); setTimeout(() => seen.delete(id), 3 * 60 * 1000); }
+    try {
+      await sock.sendMessage(chat, { react: { text: '⏳', key: msg.key } }).catch(() => {});
+      const resolved = await resolveUrl(url, axios, fetch);
+      const result = await getDownload(resolved, axios);
+      const caption = `👑 *DOWNLOADED BY ${String(extra.config?.botName || 'KING MD').toUpperCase()}*\n${result.title || ''}`.trim();
+      if (result.images?.length) {
+        for (const imageUrl of result.images.slice(0, 8)) await sock.sendMessage(chat, { image: { url: imageUrl }, caption }, { quoted: msg });
+        if (result.audio) await sock.sendMessage(chat, { audio: { url: result.audio }, mimetype: 'audio/mpeg', fileName: 'tiktok-audio.mp3' }, { quoted: msg });
+      } else {
+        const response = await axios.get(result.video, { responseType: 'arraybuffer', timeout: 90000, maxContentLength: 70 * 1024 * 1024, maxBodyLength: 70 * 1024 * 1024, headers: { 'User-Agent': UA, Referer: 'https://www.tiktok.com/' } });
+        const buffer = Buffer.from(response.data);
+        if (!buffer.length) throw new Error('The download service returned an empty file');
+        if (buffer.length > 70 * 1024 * 1024) throw new Error('Video is too large (120 MB limit)');
+        const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+        if (contentType.includes('text/html') || contentType.includes('application/json')) throw new Error('Download service returned a webpage instead of a video');
+        await sock.sendMessage(chat, { video: buffer, mimetype: 'video/mp4', caption }, { quoted: msg });
+      }
+      await sock.sendMessage(chat, { react: { text: '✅', key: msg.key } }).catch(() => {});
+    } catch (error) {
+      console.error('[KING MD TikTok]', error.stack || error.message);
+      await sock.sendMessage(chat, { text: `❌ *TikTok download failed*\n${String(error.message || 'Downloader unavailable').slice(0, 300)}\n\nTry a public TikTok video link again later.` }, { quoted: msg }).catch(() => {});
+      await sock.sendMessage(chat, { react: { text: '❌', key: msg.key } }).catch(() => {});
     }
-    await sock.sendMessage(chat, { react: { text: '✅', key: message.key } }).catch(() => {});
-  } catch (error) {
-    console.error('[KING MD TikTok]', error.stack || error.message);
-    await sock.sendMessage(chat, { text: `❌ *TikTok download failed*\n${String(error.message || 'Downloader unavailable').slice(0, 300)}\n\nTry a public TikTok video link again later.` }, { quoted: message }).catch(() => {});
-    await sock.sendMessage(chat, { react: { text: '❌', key: message.key } }).catch(() => {});
   }
-}
-handler.execute = handler; handler.handler = handler; handler.run = handler;
-handler.name = 'tiktok'; handler.description = 'Download public TikTok videos and photo posts'; handler.category = 'download';
-module.exports = handler;
+};
