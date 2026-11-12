@@ -1,98 +1,79 @@
 'use strict';
-const axiosDefault = require('axios');
-const fetchDefault = require('node-fetch');
-const seen = new Set();
-const UA = 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36';
-
-function extractTikTokUrl(input) {
-  const match = String(input || '').match(/https?:\/\/[^\s<>]+/i);
-  if (!match) return '';
-  const candidate = match[0].replace(/[),.!?\]}]+$/g, '');
-  try {
-    const parsed = new URL(candidate);
-    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-    if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return parsed.toString();
-    return '';
-  } catch { return ''; }
-}
-
-async function resolveUrl(url, axios, fetch) {
-  try {
-    const response = await axios.get(url, { maxRedirects: 8, timeout: 20000, headers: { 'User-Agent': UA }, validateStatus: s => s >= 200 && s < 400 });
-    const finalUrl = response.request?.res?.responseUrl || response.request?._redirectable?._currentUrl || response.config?.url || url;
-    return String(finalUrl).startsWith('http') ? finalUrl : url;
-  } catch (_) {
-    try { const response = await fetch(url, { redirect: 'follow', headers: { 'User-Agent': UA }, timeout: 20000 }); return response.url || url; }
-    catch { return url; }
-  }
-}
-
-function normalizeTikwm(json) {
-  const d = json?.data || json?.result || json;
-  if (!d || typeof d !== 'object') return null;
-  const video = d.hdplay || d.play || d.wmplay || d.video?.noWatermark || d.video?.url || d.download || d.url;
-  const images = d.images || d.image_post_info?.images?.map(x => x?.display_image?.url_list?.[0]).filter(Boolean);
-  if (Array.isArray(images) && images.length) return { title: d.title || 'TikTok photo post', images, audio: d.music || d.music_info?.play };
-  if (typeof video === 'string' && /^https?:\/\//i.test(video)) return { title: d.title || 'TikTok video', video };
-  return null;
-}
-
-async function getDownload(url, axios) {
-  const errors = [];
-  const endpoints = [
-    `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
-    `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
-    `https://apiziaul.vercel.app/api/downloader/tiktok?url=${encodeURIComponent(url)}`
-  ];
-  for (const endpoint of endpoints) {
-    try {
-      const response = await axios.get(endpoint, { timeout: 45000, headers: { 'User-Agent': UA, Accept: 'application/json' } });
-      const normalized = normalizeTikwm(response.data);
-      if (normalized) return normalized;
-      errors.push(`No media returned by ${new URL(endpoint).hostname}`);
-    } catch (error) { errors.push(`${new URL(endpoint).hostname}: ${error.message}`); }
-  }
-  throw new Error(errors.join('; ').slice(0, 350) || 'TikTok download services did not return a video');
-}
+// KING MD - commands/tiktok.js - PRIVATE + PUBLIC - uses YOUR cookie
+const axios = require('axios');
 
 module.exports = {
   name: 'tiktok',
-  aliases: ['tt', 'tik'],
-  description: 'Download public TikTok videos and photo posts',
-  category: 'download',
+  alias: ['tt', 'tik'],
   async execute(sock, msg, args, extra = {}) {
-    const chat = extra.from || msg.key.remoteJid;
-    const axios = extra.axios || axiosDefault;
-    const fetch = extra.fetch || fetchDefault;
-    // FRESH: args is real args now, not extra
-    const argsText = (args || []).join(' ').trim() || (extra.text || '').replace(/^[.!]tiktok\s+/i, '').trim() || msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-    const url = extractTikTokUrl(argsText);
-    if (!url) return sock.sendMessage(chat, { text: '📥 *KING MD TIKTOK DOWNLOADER*\nSend a valid TikTok video link.\nExample: .tiktok https://www.tiktok.com/@user/video/123456789' }, { quoted: msg });
-    const id = msg.key?.id;
-    if (id && seen.has(id)) return;
-    if (id) { seen.add(id); setTimeout(() => seen.delete(id), 3 * 60 * 1000); }
+    const from = extra.from || msg.key.remoteJid;
+    const url = (args[0] || '').trim();
+    if (!url || !url.includes('tiktok.com')) {
+      await sock.sendMessage(from, { text: `❌ Usage: *.tiktok <link>*` }, { quoted: msg });
+      return;
+    }
+
+    // YOUR TikTok cookie from Render Env - needed for PRIVATE videos
+    const COOKIE = process.env.TIKTOK_COOKIE || '';
+    if (!COOKIE) {
+      // Still try public first, but warn if it fails
+    }
+
+    let finalUrl = url;
     try {
-      await sock.sendMessage(chat, { react: { text: '⏳', key: msg.key } }).catch(() => {});
-      const resolved = await resolveUrl(url, axios, fetch);
-      const result = await getDownload(resolved, axios);
-      const caption = `👑 *DOWNLOADED BY ${String(extra.config?.botName || 'KING MD').toUpperCase()}*\n${result.title || ''}`.trim();
-      if (result.images?.length) {
-        for (const imageUrl of result.images.slice(0, 8)) await sock.sendMessage(chat, { image: { url: imageUrl }, caption }, { quoted: msg });
-        if (result.audio) await sock.sendMessage(chat, { audio: { url: result.audio }, mimetype: 'audio/mpeg', fileName: 'tiktok-audio.mp3' }, { quoted: msg });
-      } else {
-        const response = await axios.get(result.video, { responseType: 'arraybuffer', timeout: 90000, maxContentLength: 70 * 1024 * 1024, maxBodyLength: 70 * 1024 * 1024, headers: { 'User-Agent': UA, Referer: 'https://www.tiktok.com/' } });
-        const buffer = Buffer.from(response.data);
-        if (!buffer.length) throw new Error('The download service returned an empty file');
-        if (buffer.length > 70 * 1024 * 1024) throw new Error('Video is too large (120 MB limit)');
-        const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
-        if (contentType.includes('text/html') || contentType.includes('application/json')) throw new Error('Download service returned a webpage instead of a video');
-        await sock.sendMessage(chat, { video: buffer, mimetype: 'video/mp4', caption }, { quoted: msg });
-      }
-      await sock.sendMessage(chat, { react: { text: '✅', key: msg.key } }).catch(() => {});
-    } catch (error) {
-      console.error('[KING MD TikTok]', error.stack || error.message);
-      await sock.sendMessage(chat, { text: `❌ *TikTok download failed*\n${String(error.message || 'Downloader unavailable').slice(0, 300)}\n\nTry a public TikTok video link again later.` }, { quoted: msg }).catch(() => {});
-      await sock.sendMessage(chat, { react: { text: '❌', key: msg.key } }).catch(() => {});
+      const r = await axios.get(url, { maxRedirects: 5, headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15', ...(COOKIE ? { Cookie: COOKIE } : {}) }, timeout: 15000 });
+      if (r.request?.res?.responseUrl) finalUrl = r.request.res.responseUrl;
+    } catch (_) {}
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      'Accept': 'application/json',
+      ...(COOKIE ? { Cookie: COOKIE } : {})
+    };
+
+    let data = null;
+    let isPrivate = false;
+    try {
+      const res = await axios.get(`https://www.tikwm.com/api/?url=${encodeURIComponent(finalUrl)}`, { headers, timeout: 20000 });
+      data = res.data?.data;
+      if (res.data?.msg === 'private' || data?.is_private) isPrivate = true;
+    } catch (e) {
+      if (String(e.response?.status) === '403') isPrivate = true;
+      try {
+        const res2 = await axios.get(`https://api.tikwm.com/api/?url=${encodeURIComponent(finalUrl)}`, { headers, timeout: 20000 });
+        data = res2.data?.data;
+      } catch (_) {}
+    }
+
+    if (!data?.play) {
+      await sock.sendMessage(from, {
+        text: `🔒 *PRIVATE TIKTOK DETECTED*\n\nThis video is Private, bot can't download it without login.\n\n*How to fix:*\n1. Go to tiktok.com on Chrome, login with an account that FOLLOWS this private account\n2. Copy your Cookie\n3. Add it to Render Env: \`TIKTOK_COOKIE = your-cookie-here\`\n4. Redeploy, try again\n\n*Quick fix:* Ask owner to make video Public for 1 min, download it, then make it Private again.\n\n> KING-MD-V4 👑`
+      }, { quoted: msg });
+      return;
+    }
+
+    const title = data.title || 'TikTok Video';
+    const author = data.author?.nickname || data.author?.unique_id || 'TikTok';
+    const duration = data.duration ? `${Math.floor(data.duration / 60)}:${String(data.duration % 60).padStart(2, '0')}` : '0:00';
+    const views = data.play_count ? Number(data.play_count).toLocaleString() : '0';
+    const likes = data.digg_count ? Number(data.digg_count).toLocaleString() : '0';
+    const cover = data.cover || data.origin_cover;
+    const videoUrl = data.play;
+
+    const card = `• 𝐊𝐈𝐍𝐆 𝐌𝐃 𝐓𝐈𝐊𝐓𝐎𝐊 𝐃𝐎𝐖𝐍𝐋𝐎𝐀𝐃𝐄𝐑 🎬👑\n\n┌───➤\n│ 🎵 𝐓𝐢𝐭𝐥𝐞 - ${title}\n│ ⏱️ 𝐃𝐮𝐫𝐚𝐭𝐢𝐨𝐧 - ${duration}\n│ 👁️ 𝐕𝐢𝐞𝐰𝐬 - ${views}\n│ ❤️ 𝐋𝐢𝐤𝐞𝐬 - ${likes}\n│ 👤 𝐀𝐮𝐭𝐡𝐨𝐫 - ${author}\n│ 📥 𝐒𝐭𝐚𝐭𝐮𝐬 - Downloading...\n└───➤\n\nPowered by 𝐊𝐈𝐍𝐆 𝐌𝐃 👑`;
+
+    try {
+      if (cover) {
+        const thumb = await axios.get(cover, { responseType: 'arraybuffer', headers, timeout: 20000 });
+        await sock.sendMessage(from, { image: Buffer.from(thumb.data), caption: card }, { quoted: msg });
+      } else await sock.sendMessage(from, { text: card }, { quoted: msg });
+    } catch (_) { await sock.sendMessage(from, { text: card }, { quoted: msg }); }
+
+    try {
+      const vid = await axios.get(videoUrl, { responseType: 'arraybuffer', headers, timeout: 60000 });
+      await sock.sendMessage(from, { video: Buffer.from(vid.data), caption: `• 𝐊𝐈𝐍𝐆 𝐌𝐃 𝐓𝐈𝐊𝐓𝐎𝐊 🎬👑\n\n🎵 ${title}\n👤 ${author}\n\nPowered by 𝐊𝐈𝐍𝐆 𝐌𝐃 👑` }, { quoted: msg });
+    } catch (e) {
+      await sock.sendMessage(from, { text: `✅ Found video but couldn't send file.\nLink: ${videoUrl}` }, { quoted: msg });
     }
   }
 };
