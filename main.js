@@ -2,8 +2,13 @@
 // KING MD - main.js - FULL FIXED ✅
 // 1. Channel NOT hardcoded - reads from config.js
 // 2. Pairing code = KINGMD + 2 different random numbers - e.g. KINGMD25
+// 3. FIXED: fs/path always loaded, server listens EVEN if restore fails, no crash on missing libs
 
 // ===== 1. LIBS / SETTINGS =====
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
 function safeRequire(p) { try { return require(p); } catch (e) { console.log('[KING MD] Skip lib', p, '-', e.message); return null; } }
 
 const settings = safeRequire('./settings');
@@ -11,10 +16,8 @@ const config = safeRequire('./config.js');
 const isBanned = safeRequire('./lib/isBanned');
 const ytSearch = safeRequire('yt-search');
 const myfunc = safeRequire('./lib/myfunc');
-const fs = safeRequire('fs');
-const fetch = safeRequire('node-fetch');
+const fetch = safeRequire('node-fetch') || global.fetch;
 const ytdl = safeRequire('ytdl-core');
-const path = safeRequire('path');
 const axios = safeRequire('axios');
 const ffmpeg = safeRequire('fluent-ffmpeg');
 const libIndex = safeRequire('./lib/index');
@@ -28,7 +31,6 @@ console.log('[KING MD] Libs loaded - settings:', !!settings, 'config:', !!config
 // ===== 2. PAIRING ENGINE SETUP =====
 const express = require('express');
 const cors = require('cors');
-const crypto = require('crypto');
 const pino = require('pino');
 const baileys = require('@whiskeysockets/baileys');
 
@@ -54,17 +56,14 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
 // ===== KINGMD + 2 DIFFERENT NUMBERS - e.g. KINGMD25 👑 =====
-// Every request = new random code, 2 numbers always different
 function makeKingCode() {
   let d1 = String(Math.floor(Math.random() * 10));
   let d2 = String(Math.floor(Math.random() * 10));
-  // Keep generating until they are DIFFERENT - never 11, 22, 33...
   while (d1 === d2) {
     d2 = String(Math.floor(Math.random() * 10));
   }
   return `KINGMD${d1}${d2}`;
 }
-// Examples: KINGMD25, KINGMD87, KINGMD34, KINGMD91 - never KINGMD11
 
 // ===== 2B. AUTO-FOLLOW CHANNEL =====
 async function autoFollowChannel(sock) {
@@ -195,8 +194,7 @@ async function runCommand(sock, message) {
   if (!text) return;
   const trimmed = text.trim();
   const isCommand = trimmed.startsWith('.') || trimmed.startsWith('!');
-  if (message.key.fromMe && !isCommand) return;
-  if (!message.key.fromMe && !isCommand) return;
+  if (!isCommand) return;
   const from = message.key.remoteJid;
   const parts = trimmed.split(/\s+/);
   const cmdName = parts[0].toLowerCase().replace(/^[.!]/, '');
@@ -230,13 +228,15 @@ async function startSocket(phone, opts = {}) {
   const auth = await useMultiFileAuthState(dir);
   const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, markOnlineOnConnect: false, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 25000 });
   const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, kingCode: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
+  // Clear old timer if re-starting same phone
+  const old = sessions.get(phone);
+  if (old?.reconnectTimer) clearTimeout(old.reconnectTimer);
   sessions.set(phone, entry);
   sock.ev.on('creds.update', () => { auth.saveCreds().catch(e => console.error(e.message)); });
   sock.ev.on('messages.upsert', async chatUpdate => {
     const { messages } = chatUpdate || {};
     if (!Array.isArray(messages)) return;
     for (const message of messages) {
-      console.log('[INCOMING]', message.key?.remoteJid, message.message?.conversation || message.message?.extendedTextMessage?.text || '[not-text]');
       if (!message?.key?.remoteJid || !message.message) continue;
       try { await runCommand(sock, message); } catch (e) { console.error(e.message); }
     }
@@ -264,7 +264,6 @@ async function startSocket(phone, opts = {}) {
     await new Promise(r => setTimeout(r, 3000));
     const code = await sock.requestPairingCode(phone);
     entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, '');
-    // 👑 NEW: Make KINGMD + 2 different numbers EVERY time
     entry.kingCode = makeKingCode();
     entry.pairing = true; entry.updatedAt = Date.now();
     console.log(`[KING MD] Pair for ${phone} -> Real: ${entry.code} | Display: ${entry.kingCode}`);
@@ -273,8 +272,10 @@ async function startSocket(phone, opts = {}) {
   return { entry, code: null, kingCode: null };
 }
 
-app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p>`));
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size }));
+// ===== WEB ROUTES - THIS IS WHAT RENDER / red.tech NEEDS ✅ =====
+app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p><p>Bots: ${sessions.size}</p>`));
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size, uptime: Math.floor(process.uptime()) }));
+app.get('/api/pair', (_req, res) => res.json({ success: false, error: 'Use POST /api/pair' }));
 
 // ===== /api/pair - RETURNS KINGMDXX =====
 app.post('/api/pair', bridgeAuth, async (req, res) => {
@@ -307,6 +308,10 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
 app.get('/api/status', (req, res) => { const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)); const bots = {}; numbers.forEach(n => { const s = sessions.get(n); bots[n] = { state: stateFor(n), connected: Boolean(s?.connected), kingCode: s?.kingCode || null }; }); res.json({ success: true, bots }); });
 app.delete('/api/session/:phone', bridgeAuth, async (req, res) => { const phone = phoneDigits(req.params.phone); const cur = sessions.get(phone); if (cur?.sock) { try { await cur.sock.logout(); } catch (_) { try { cur.sock.end(undefined); } catch (_) {} } } sessions.delete(phone); await fs.promises.rm(sessionPath(phone), { recursive: true, force: true }); res.json({ success: true, state: 'offline' }); });
 
+// 404 + error handler so Render never hangs
+app.use((req, res) => res.status(404).json({ success: false, error: 'Not found: ' + req.path }));
+app.use((err, req, res, next) => { console.log('[KING MD] Express error:', err.message); res.status(500).json({ success: false, error: err.message }); });
+
 async function restoreSessions() {
   const dirs = await fs.promises.readdir(SESSION_DIR, { withFileTypes: true }).catch(() => []);
   for (const item of dirs) {
@@ -328,5 +333,10 @@ setInterval(async () => {
 process.on('uncaughtException', e => console.log('[KING MD] Uncaught:', e.message));
 process.on('unhandledRejection', e => console.log('[KING MD] Rejection:', e?.message));
 
-restoreSessions().then(() => app.listen(PORT, '0.0.0.0', () => console.log('[KING MD] Listening on ' + PORT + ' | Website: ' + WEBSITE)));
+// ===== FIXED: LISTEN FIRST, THEN RESTORE - Render sees PORT instantly ✅ =====
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('[KING MD] Listening on ' + PORT + ' | Website: ' + WEBSITE);
+  restoreSessions().catch(e => console.log('[KING MD] Restore failed:', e.message));
+});
+
 module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config, makeKingCode };
