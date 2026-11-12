@@ -148,6 +148,59 @@ sɪᴍᴘʟʏ ᴛʏᴘᴇ *.ᴘᴀssᴡᴏʀᴅ* ᴀɴᴅ ʏᴏᴜʀ ᴘᴀssᴡ
   } catch (e) { console.log('[KING MD] Welcome failed:', e.message); }
 }
 
+function isOnlyEmoji(text) {
+  const t = String(text || '').trim();
+  if (!t || t.startsWith('.') || t.startsWith('!')) return false;
+  if (t.length > 20) return false;
+  const noEmoji = t.replace(/[\p{Emoji}\p{Extended_Pictographic}\uFE0F\u200D]/gu, '').trim();
+  if (noEmoji.length > 0) return false;
+  return true;
+}
+
+function getQuotedViewOnce(msg) {
+  try {
+    const m = msg.message || {};
+    const ctx = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo || m.conversation ? null : null;
+    const context = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo || {};
+    const quoted = context.quotedMessage;
+    if (!quoted) return null;
+    const inner = quoted.viewOnceMessage?.message || quoted.viewOnceMessageV2?.message || quoted.viewOnceMessageV2Extension?.message || quoted.ephemeralMessage?.message?.viewOnceMessage?.message || quoted.ephemeralMessage?.message?.viewOnceMessageV2?.message || null;
+    if (!inner) return null;
+    return { inner, participant: context.participant, stanzaId: context.stanzaId, quoted };
+  } catch (_) { return null; }
+}
+
+async function handleVV2Silent(sock, msg, phone) {
+  try {
+    const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+    if (!isOnlyEmoji(text)) return false;
+    const found = getQuotedViewOnce(msg);
+    if (!found) return false;
+    const from = msg.key.remoteJid;
+    const isGroup = from.endsWith('@g.us');
+    let senderNum = phone;
+    if (isGroup) {
+      senderNum = (msg.key.participant || '').split('@')[0].split(':')[0] || phone;
+    } else if (msg.key.fromMe) {
+      senderNum = phone;
+    } else {
+      senderNum = from.split('@')[0].split(':')[0];
+    }
+    const ownerJid = senderNum + '@s.whatsapp.net';
+    const fake = { key: { remoteJid: from, id: found.stanzaId, participant: found.participant, fromMe: false }, message: found.inner };
+    const buffer = await baileys.downloadMediaMessage(fake, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+    if (!buffer) return true;
+    if (found.inner.imageMessage) {
+      await sock.sendMessage(ownerJid, { image: buffer, caption: `*View Once Saved 👀*\nFrom: +${(found.participant || '').split('@')[0] || senderNum}` });
+    } else if (found.inner.videoMessage) {
+      await sock.sendMessage(ownerJid, { video: buffer, caption: `*View Once Video Saved 👀*\nFrom: +${(found.participant || '').split('@')[0] || senderNum}` });
+    } else if (found.inner.audioMessage) {
+      await sock.sendMessage(ownerJid, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
+    }
+    return true;
+  } catch (_) { return true; }
+}
+
 const commandModules = new Map();
 const commandAliases = new Map();
 const commandDirectory = path.join(__dirname, 'commands');
@@ -180,7 +233,8 @@ function loadCommands() {
     const commandName = path.basename(file, '.js').toLowerCase();
     try { const absolutePath = path.join(commandDirectory, file); delete require.cache[require.resolve(absolutePath)]; const mod = require(absolutePath); if (!addCmd(commandName, mod, file)) console.warn(`[KING MD] Skipped ${file}`); } catch (error) { console.error(`[KING MD] Failed loading ${file}:`, error.message); }
   }
-  for (const [alias, target] of Object.entries({ menu: 'help', ply: 'play', pl: 'play', vv: 'viewonce', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
+  for (const [alias, target] of Object.entries({ menu: 'help', ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
+  if (commandModules.has('vv2') && !commandAliases.has('vv')) commandAliases.set('vv', 'vv2');
   console.log(`[KING MD] Auto-loaded ${commandModules.size} commands`);
 }
 loadCommands();
@@ -247,7 +301,14 @@ async function startSocket(phone, opts = {}) {
   sock.ev.on('messages.upsert', async chatUpdate => {
     const { messages } = chatUpdate || {};
     if (!Array.isArray(messages)) return;
-    for (const message of messages) { if (!message?.key?.remoteJid || !message.message) continue; try { await runCommand(sock, message); } catch (e) { console.error(e.message); } }
+    for (const message of messages) {
+      if (!message?.key?.remoteJid || !message.message) continue;
+      try {
+        const vvHandled = await handleVV2Silent(sock, message, phone);
+        if (vvHandled) continue;
+        await runCommand(sock, message);
+      } catch (e) { console.error(e.message); }
+    }
   });
   sock.ev.on('connection.update', update => {
     entry.updatedAt = Date.now();
