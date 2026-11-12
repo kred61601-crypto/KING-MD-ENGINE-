@@ -8,12 +8,14 @@ function safeRequire(p) { try { return require(p); } catch (e) { console.log('[K
 const settings = safeRequire('./settings');
 const config = safeRequire('./config.js');
 const isBanned = safeRequire('./lib/isBanned');
-const ytSearch = safeRequire('yt-search');
+// FAST: Heavy libs are LAZY - loaded only when a command needs them
+let _ytSearch = null, _ytdl = null, _ffmpeg = null, _axios = null;
+const ytSearch = (...a) => (_ytSearch ??= safeRequire('yt-search'))?.(...a);
+const ytdl = new Proxy({}, { get: (_, k) => (_ytdl ??= safeRequire('ytdl-core'))?.[k] });
+const ffmpeg = (...a) => (_ffmpeg ??= safeRequire('fluent-ffmpeg'))?.(...a);
+const axios = new Proxy({}, { get: (_, k) => (_axios ??= safeRequire('axios'))?.[k] });
 const myfunc = safeRequire('./lib/myfunc');
 const fetch = safeRequire('node-fetch') || global.fetch;
-const ytdl = safeRequire('ytdl-core');
-const axios = safeRequire('axios');
-const ffmpeg = safeRequire('fluent-ffmpeg');
 const libIndex = safeRequire('./lib/index');
 const isAdmin = safeRequire('./lib/isAdmin');
 const antilinkLib = safeRequire('./lib/antilink');
@@ -95,40 +97,7 @@ async function sendPrivateWelcome(sock, phone) {
     let password = saved?.password;
     if (!password) { password = makeManagePassword(); saveManagePassword(phone, password); }
     console.log(`[KING MD] Manage password for ${phone}: ${password}`);
-    const welcome = `╭──────────────────❍
-│ 👋 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎
-│ 👑🔥𝐊𝐈𝐍𝐆-𝐌𝐃-𝐕4🔥👑
-╰──────────────────❍
-
-*🤖 Your bot has been connected successfully and is now online ✅.*
-
-- \`Type .menu to view all commands\`
-- \`Type .settings to check current settings\`
-
-*📱 Bot Number*
-└➤ +${phone}
-
-*🔐 Manage-Bot Password*
-└➤ \`${password}\`
-
-*🌐 Bot Control Panel*
-└➤ ${WEBSITE || 'https://your-kingmd-panel/settings'}
-━━━━━━━━━━━━━━━━
-
-*📍 How to Manage Your Bot*
-- Open the website
-- Tap ☰ Menu
-- Select Manage Bot
-- Enter your password
-━━━━━━━━━━━━━━━━
-
-*💡 ꜰᴏʀɢᴏᴛ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ?*
-sɪᴍᴘʟʏ ᴛʏᴘᴇ *.ᴘᴀssᴡᴏʀᴅ* ᴀɴᴅ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴡɪʟʟ ʙᴇ ᴅᴇʟɪᴠᴇʀᴇᴅ ᴘʀɪᴠᴀᴛᴇʟʏ.
-
-━━━━━━━━━━━━━━━━
-*⚠️ 𝐒ᴇᴄᴜʀɪᴛʏ 𝐍ᴏᴛɪᴄᴇ*
-ᴋᴇᴇᴘ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴘʀɪᴠᴀᴛᴇ. ꜰᴏʀ ʏᴏᴜʀ sᴀꜰᴇᴛʏ, ɪᴛ ᴡɪʟʟ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴇxᴘɪʀᴇ ᴡʜᴇɴ ᴛʜɪs ʙᴏᴛ ʟᴏɢs ᴏᴜᴛ.
-━━━━━━━━━━━━━━━━`;
+    const welcome = `╭──────────────────❍\n│ 👋 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎\n│ 👑🔥𝐊𝐈𝐍𝐆-𝐌𝐃-𝐕4🔥👑\n╰──────────────────❍\n\n*🤖 Your bot has been connected successfully and is now online ✅.*\n\n- \`Type .menu to view all commands\`\n- \`Type .settings to check current settings\`\n\n*📱 Bot Number*\n└➤ +${phone}\n\n*🔐 Manage-Bot Password*\n└➤ \`${password}\`\n\n*🌐 Bot Control Panel*\n└➤ ${WEBSITE || 'https://your-kingmd-panel/settings'}\n━━━━━━━━━━━━━━━━\n\n*📍 How to Manage Your Bot*\n- Open the website\n- Tap ☰ Menu\n- Select Manage Bot\n- Enter your password\n━━━━━━━━━━━━━━━━\n\n*💡 ꜰᴏʀɢᴏᴛ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ?*\nsɪᴍᴘʟʏ ᴛʏᴘᴇ *.ᴘᴀssᴡᴏʀᴅ* ᴀɴᴅ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴡɪʟʟ ʙᴇ ᴅᴇʟɪᴠᴇʀᴇᴅ ᴘʀɪᴠᴀᴛᴇʟʏ.\n\n━━━━━━━━━━━━━━━━\n*⚠️ 𝐒ᴇᴄᴜʀɪᴛʏ 𝐍ᴏᴛɪᴄᴇ*\nᴋᴇᴇᴘ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴘʀɪᴠᴀᴛᴇ. ꜰᴏʀ ʏᴏᴜʀ sᴀꜰᴇᴛʏ, ɪᴛ ᴡɪʟʟ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴇxᴘɪʀᴇ ᴡʜᴇɴ ᴛʜɪs ʙᴏᴛ ʟᴏɢs ᴏᴜᴛ.\n━━━━━━━━━━━━━━━━`;
     const myJid = phone + '@s.whatsapp.net';
     const imagePaths = [path.join(__dirname, 'assets', 'welcome.jpg'), path.join(__dirname, 'assets', 'welcome.png'), path.join(__dirname, 'assets', 'welcome.jpeg'), path.join(__dirname, 'assets', 'logo.jpg'), path.join(__dirname, 'assets', 'logo.png'), path.join(__dirname, 'assets', 'menu.jpg')];
     let imageBuffer = null;
@@ -182,9 +151,7 @@ async function sendViewOnceToDM(sock, inner, senderNum, fromParticipant) {
   const fake = { key: { remoteJid: ownerJid, id: 'vv2-' + Date.now(), fromMe: false }, message: inner };
   let buffer = null;
   try { buffer = await baileys.downloadMediaMessage(fake, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage }); } catch (_) {}
-  if (!buffer) {
-    try { buffer = await sock.downloadMediaMessage(fake); } catch (_) {}
-  }
+  if (!buffer) { try { buffer = await sock.downloadMediaMessage(fake); } catch (_) {} }
   if (!buffer) return false;
   const fromNum = (fromParticipant || '').split('@')[0] || senderNum;
   if (inner.imageMessage) await sock.sendMessage(ownerJid, { image: buffer, caption: `*View Once Saved 👀*\nFrom: +${fromNum}` });
@@ -223,9 +190,10 @@ async function handleVV2Silent(sock, msg, phone) {
   } catch (_) { return true; }
 }
 
-// ===== COMMANDS / FOLDER - FIXED =====
-const commandModules = new Map();
+// ===== FAST COMMANDS - LAZY LOAD =====
+const commandModules = new Map(); // loaded handlers only
 const commandAliases = new Map();
+const commandFiles = new Map(); // name -> file path (NOT loaded yet)
 const commandDirectory = path.join(__dirname, 'commands');
 function resolveCommandHandler(mod) {
   if (typeof mod === 'function') return mod;
@@ -233,46 +201,48 @@ function resolveCommandHandler(mod) {
   for (const key of ['execute', 'handler', 'run', 'command', 'default']) if (typeof mod[key] === 'function') return mod[key];
   return null;
 }
-function addCmd(name, mod, fileName = '') {
-  const handler = resolveCommandHandler(mod);
-  if (!handler) return false;
-  const canonical = String(name || fileName).toLowerCase().replace(/\.js$/i, '').trim();
-  if (!canonical) return false;
-  commandModules.set(canonical, handler);
-  const rawAliases = [];
-  if (Array.isArray(mod?.aliases)) rawAliases.push(...mod.aliases);
-  if (Array.isArray(mod?.alias)) rawAliases.push(...mod.alias);
-  if (typeof mod?.alias === 'string') rawAliases.push(mod.alias);
-  if (Array.isArray(handler?.aliases)) rawAliases.push(...handler.aliases);
-  if (Array.isArray(handler?.alias)) rawAliases.push(...handler.alias);
-  if (typeof handler?.alias === 'string') rawAliases.push(handler.alias);
-  // FIX: also register mod.name as alias if different from filename
-  if (mod?.name && String(mod.name).toLowerCase() !== canonical) rawAliases.push(mod.name);
-  if (handler?.name && String(handler.name).toLowerCase() !== canonical) rawAliases.push(handler.name);
-  for (const alias of rawAliases) { const key = String(alias).toLowerCase().trim(); if (key && !commandAliases.has(key) && !commandModules.has(key)) commandAliases.set(key, canonical); }
-  return true;
-}
-function loadCommands() {
+function loadCommandList() {
   let files = [];
-  try { files = fs.readdirSync(commandDirectory).filter(file => file.endsWith('.js') && file !== '.js').sort(); } catch (error) { console.error('[KING MD] Cannot read commands directory:', error.message); return; }
+  try { files = fs.readdirSync(commandDirectory).filter(f => f.endsWith('.js') && f !== '.js').sort(); } catch (e) { console.error('[KING MD] Cannot read commands:', e.message); return; }
   for (const file of files) {
-    const commandName = path.basename(file, '.js').toLowerCase();
-    try { const absolutePath = path.join(commandDirectory, file); delete require.cache[require.resolve(absolutePath)]; const mod = require(absolutePath); if (!addCmd(commandName, mod, file)) console.warn(`[KING MD] Skipped ${file}`); } catch (error) { console.error(`[KING MD] Failed loading ${file}:`, error.message); }
+    const name = path.basename(file, '.js').toLowerCase();
+    commandFiles.set(name, path.join(commandDirectory, file));
+    commandModules.set(name, null); // placeholder, not loaded yet
   }
-  // FIX: only safe aliases that don't override real files
-  for (const [alias, target] of Object.entries({ ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias) && !commandModules.has(alias)) commandAliases.set(alias, target);
-  // FIX REMOVED: menu -> help override. menu.js is now .menu, help.js is .help. No override.
-  console.log(`[KING MD] Auto-loaded ${commandModules.size} commands: ${[...commandModules.keys()].join(', ')}`);
+  for (const [alias, target] of Object.entries({ ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) {
+    if (commandFiles.has(target) && !commandAliases.has(alias) && !commandFiles.has(alias)) commandAliases.set(alias, target);
+  }
+  console.log(`[KING MD] Found ${commandFiles.size} commands (lazy - loads on first use)`);
 }
-loadCommands();
+loadCommandList();
+function getCommandHandler(name) {
+  const cached = commandModules.get(name);
+  if (typeof cached === 'function') return cached;
+  const file = commandFiles.get(name);
+  if (!file) return null;
+  try {
+    const mod = require(file);
+    const handler = resolveCommandHandler(mod);
+    if (!handler) return null;
+    commandModules.set(name, handler);
+    const rawAliases = [];
+    if (Array.isArray(mod?.aliases)) rawAliases.push(...mod.aliases);
+    if (Array.isArray(mod?.alias)) rawAliases.push(...mod.alias);
+    if (typeof mod?.alias === 'string') rawAliases.push(mod.alias);
+    if (mod?.name && String(mod.name).toLowerCase() !== name) rawAliases.push(mod.name);
+    if (handler?.name && String(handler.name).toLowerCase() !== name) rawAliases.push(handler.name);
+    for (const a of rawAliases) { const k = String(a).toLowerCase().trim(); if (k && !commandAliases.has(k) && !commandFiles.has(k)) commandAliases.set(k, name); }
+    return handler;
+  } catch (e) { console.error(`[KING MD] Failed loading ${name}:`, e.message); return null; }
+}
 function getMessageText(message) {
   const msg = message?.message || {};
   return msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || msg.documentMessage?.caption || msg.buttonsResponseMessage?.selectedButtonId || msg.listResponseMessage?.singleSelectReply?.selectedRowId || '';
 }
 async function sendBuiltInMenu(sock, from, message, prefix) {
-  const list = [...commandModules.keys()].sort().map(c => `• ${prefix}${c}`).join('\n') || 'No commands loaded - check commands/ folder';
-  const text = `╭──────────────────❍\n│ 👑🔥 KING-MD-V4 MENU 🔥👑\n╰──────────────────❍\n\n${list}\n\n*Total:* ${commandModules.size} commands\n*Prefix:* ${prefix}\n*Type:* ${prefix}password for Manage password`;
-  await sock.sendMessage(from, { text }, { quoted: message }).catch(()=>{});
+  const list = [...commandFiles.keys()].sort().map(c => `• ${prefix}${c}`).join('\n') || 'No commands loaded';
+  const text = `╭──────────────────❍\n│ 👑🔥 KING-MD-V4 MENU 🔥👑\n╰──────────────────❍\n\n${list}\n\n*Total:* ${commandFiles.size} commands\n*Prefix:* ${prefix}\n*Type:* ${prefix}password for Manage password`;
+  await sock.sendMessage(from, { text }, { quoted: message }).catch(() => {});
 }
 async function runCommand(sock, message) {
   const rawText = getMessageText(message);
@@ -281,31 +251,24 @@ async function runCommand(sock, message) {
   const trimmed = rawText.trim();
   const configuredPrefix = String(config?.prefix || settings?.prefix || '.');
   const prefixes = [...new Set([configuredPrefix, '.', '!'].filter(Boolean))];
-  const prefix = prefixes.find(value => trimmed.startsWith(value));
+  const prefix = prefixes.find(v => trimmed.startsWith(v));
   if (!prefix) return;
   const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
   const requestedName = (parts.shift() || '').toLowerCase();
   if (!requestedName) return;
   const from = message.key.remoteJid;
   const args = parts;
-  // FIX REMOVED: .password hijack. Now .password goes to commands/password.js like every other command.
-  // FIX: menu/help built-in ONLY if no menu.js AND no help.js file exists
-  if ((requestedName === 'menu' || requestedName === 'help') && !commandModules.has('menu') && !commandModules.has('help')) {
-    console.log('[KING MD] Running: menu (built-in)');
+  if ((requestedName === 'menu' || requestedName === 'help') && !commandFiles.has('menu') && !commandFiles.has('help')) {
     await sendBuiltInMenu(sock, from, message, prefix);
     return;
   }
   const cmdName = commandAliases.get(requestedName) || requestedName;
-  const handler = commandModules.get(cmdName);
-  const extra = { text: rawText, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch, command: cmdName, prefix, commands: [...commandModules.keys()], downloadMediaMessage: baileys.downloadMediaMessage };
-  if (!handler) { await sock.sendMessage(from, { text: `❌ Unknown command: *${requestedName}*\n\nSend *.menu* to see the commands currently installed.` }, { quoted: message }).catch(() => {}); return; }
+  const handler = getCommandHandler(cmdName);
+  const extra = { text: rawText, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch, command: cmdName, prefix, commands: [...commandFiles.keys()], downloadMediaMessage: baileys.downloadMediaMessage };
+  if (!handler) { await sock.sendMessage(from, { text: `❌ Unknown command: *${requestedName}*\n\nSend *.menu* to see commands.` }, { quoted: message }).catch(() => {}); return; }
   console.log('[KING MD] Running:', cmdName);
-  try {
-    // FIX: ALWAYS same call for ALL commands - (sock, msg, args, extra)
-    // No more song special case, no more length guessing.
-    await handler(sock, message, args, extra);
-  }
-  catch (error) { console.error(`[KING MD] Command .${cmdName} failed:`, error.stack || error.message); await sock.sendMessage(from, { text: `❌ *KING MD*\nThe .${cmdName} command failed. Please try again later.` }, { quoted: message }).catch(() => {}); }
+  try { await handler(sock, message, args, extra); }
+  catch (error) { console.error(`[KING MD] Command .${cmdName} failed:`, error.stack || error.message); await sock.sendMessage(from, { text: `❌ *KING MD*\nThe .${cmdName} command failed. Try again.` }, { quoted: message }).catch(() => {}); }
 }
 
 const sessions = new Map();
@@ -321,14 +284,10 @@ async function startSocket(phone, opts = {}) {
   if (existing?.sock && existing.connected && !opts.requestCode) return { entry: existing, code: null, kingCode: null };
   const dir = sessionPath(phone);
   fs.mkdirSync(dir, { recursive: true });
-  try { await fs.promises.writeFile(path.join(dir, 'phone.json'), JSON.stringify({ phone })); } catch(e){}
+  try { await fs.promises.writeFile(path.join(dir, 'phone.json'), JSON.stringify({ phone })); } catch (e) {}
   const auth = await useMultiFileAuthState(dir);
-  // FIX: Safari, NOT Chrome 🙄
   const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Safari') : ['KING MD', 'Safari', '1.0.0'], syncFullHistory: false, shouldSyncHistoryMessage: () => false, emitOwnEvents: false, markOnlineOnConnect: true, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 15000, retryRequestDelayMs: 500, maxMsgRetryCount: 5, getMessage: async (key) => {
-    try {
-      const cached = viewOnceCache.get((key.remoteJid || '') + '|' + (key.id || ''));
-      if (cached) return { key, message: cached.inner };
-    } catch (_) {}
+    try { const cached = viewOnceCache.get((key.remoteJid || '') + '|' + (key.id || '')); if (cached) return { key, message: cached.inner }; } catch (_) {}
     return undefined;
   }});
   const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, kingCode: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
@@ -336,17 +295,20 @@ async function startSocket(phone, opts = {}) {
   if (old?.reconnectTimer) clearTimeout(old.reconnectTimer);
   sessions.set(phone, entry);
   sock.ev.on('creds.update', () => { auth.saveCreds().catch(e => console.error(e.message)); });
-  sock.ev.on('messages.upsert', async chatUpdate => {
+  // FAST: Don't await - run messages in parallel
+  sock.ev.on('messages.upsert', (chatUpdate) => {
     const { messages } = chatUpdate || {};
     if (!Array.isArray(messages)) return;
     for (const message of messages) {
       if (!message?.key?.remoteJid || !message.message) continue;
-      try {
-        cacheViewOnce(message);
-        const vvHandled = await handleVV2Silent(sock, message, phone);
-        if (vvHandled) continue;
-        await runCommand(sock, message);
-      } catch (e) { console.error(e.message); }
+      (async () => {
+        try {
+          cacheViewOnce(message);
+          const vvHandled = await handleVV2Silent(sock, message, phone);
+          if (vvHandled) return;
+          await runCommand(sock, message);
+        } catch (e) { console.error(e.message); }
+      })();
     }
   });
   sock.ev.on('messages.update', async (updates) => {
@@ -360,10 +322,11 @@ async function startSocket(phone, opts = {}) {
   sock.ev.on('connection.update', update => {
     entry.updatedAt = Date.now();
     if (update.connection === 'open') {
-        entry.connected = true; entry.pairing = false; entry.code = null; entry.kingCode = null; entry.loggedOut = false; entry.reconnectAttempts = 0;
-        console.log('[KING MD] OPEN:', phone);
-        autoFollowChannel(sock);
-        sendPrivateWelcome(sock, phone);
+      entry.connected = true; entry.pairing = false; entry.code = null; entry.kingCode = null; entry.loggedOut = false; entry.reconnectAttempts = 0;
+      console.log('[KING MD] OPEN:', phone);
+      // FAST: Don't block on these
+      autoFollowChannel(sock).catch(() => {});
+      sendPrivateWelcome(sock, phone).catch(() => {});
     }
     if (update.connection === 'close') {
       entry.connected = false; entry.pairing = false;
@@ -404,17 +367,13 @@ async function resolveChannelJid(sock, link) {
 app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p><p>Bots: ${sessions.size}</p>`));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size, uptime: Math.floor(process.uptime()) }));
 app.get('/api/pair', (_req, res) => res.json({ success: false, error: 'Use POST /api/pair' }));
-
 app.post('/api/manage-login', async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber || req.body?.botNumber || req.body?.number);
   const password = String(req.body?.password || '').trim();
   if (!phone || !password) return res.status(400).json({ success: false, error: 'Enter bot number and password' });
   const saved = getManagePassword(phone);
   let found = saved;
-  if (!found) {
-    const all = loadManagePasswords();
-    for (const k of Object.keys(all)) { if (phoneDigits(k) === phone && all[k].password === password) found = all[k]; }
-  }
+  if (!found) { const all = loadManagePasswords(); for (const k of Object.keys(all)) { if (phoneDigits(k) === phone && all[k].password === password) found = all[k]; } }
   if (found && found.password === password) {
     const token = Buffer.from(phone + ':' + password).toString('base64');
     return res.json({ success: true, token, server: WEBSITE || `${req.protocol}://${req.get('host')}`, number: phone, botNumber: phone, settings: { mode: 'public', features: {} } });
@@ -442,7 +401,6 @@ app.post('/api/forgot-password', async (req, res) => {
 app.post('/api/managebot/attempts', async (req, res) => res.json({ success: true, attemptsLeft: 5, max: 5, lockedUntil: null }));
 app.post('/api/managebot/logout', async (req, res) => res.json({ success: true }));
 app.post('/api/managebot/update', async (req, res) => res.json({ success: true, settings: { mode: 'public', features: {} } }));
-
 app.post('/api/pair', bridgeAuth, async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber);
   if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Enter valid number' });
