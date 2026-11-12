@@ -1,8 +1,8 @@
 'use strict';
 // KING MD - main.js - FULL FIXED ✅
+// FIXED: Added POST /api/channel-react BEFORE 404 handler
 // 1. Channel NOT hardcoded - reads from config.js
 // 2. Pairing code = KINGMD + 2 different random numbers - e.g. KINGMD25
-// 3. FIXED: fs/path always loaded, server listens EVEN if restore fails, no crash on missing libs
 
 // ===== 1. LIBS / SETTINGS =====
 const fs = require('fs');
@@ -48,24 +48,19 @@ const PORT = Number(process.env.PORT || 10000);
 const SESSION_DIR = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
 const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
 
-// ===== FIXED: NO HARDCODED CHANNEL / WEBSITE - READ FROM CONFIG ONLY =====
 const CHANNEL = config?.channel || config?.channelLink || process.env.CHANNEL_LINK || '';
 const CHANNEL_INVITE = config?.channelInvite || config?.channelCode || process.env.CHANNEL_INVITE || '';
 const WEBSITE = config?.website || process.env.WEBSITE || '';
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
-// ===== KINGMD + 2 DIFFERENT NUMBERS - e.g. KINGMD25 👑 =====
 function makeKingCode() {
   let d1 = String(Math.floor(Math.random() * 10));
   let d2 = String(Math.floor(Math.random() * 10));
-  while (d1 === d2) {
-    d2 = String(Math.floor(Math.random() * 10));
-  }
+  while (d1 === d2) { d2 = String(Math.floor(Math.random() * 10)); }
   return `KINGMD${d1}${d2}`;
 }
 
-// ===== 2B. AUTO-FOLLOW CHANNEL =====
 async function autoFollowChannel(sock) {
   try {
     if (!CHANNEL_INVITE) { console.log('[KING MD] No channel invite in config, skip auto-follow'); return; }
@@ -75,15 +70,12 @@ async function autoFollowChannel(sock) {
     await sock.newsletterFollow(channelJid);
     console.log('[KING MD] ✅ Auto-followed channel!');
     try { await sock.newsletterFetch(channelJid); } catch (e) {}
-  } catch (e) {
-    console.log('[KING MD] Auto-follow failed:', e.message);
-  }
+  } catch (e) { console.log('[KING MD] Auto-follow failed:', e.message); }
 }
 
 // ===== 3. COMMANDS =====
 const commandModules = new Map();
 function addCmd(name, mod) { if (mod) commandModules.set(name, mod); }
-
 addCmd('tagall', safeRequire('./commands/tagall'));
 addCmd('help', safeRequire('./commands/help'));
 addCmd('menu', safeRequire('./commands/help'));
@@ -188,7 +180,6 @@ function resolveCommandHandler(mod) {
   }
   return null;
 }
-
 async function runCommand(sock, message) {
   const text = message.message?.conversation || message.message?.extendedTextMessage?.text || message.message?.imageMessage?.caption || message.message?.videoMessage?.caption || "";
   if (!text) return;
@@ -228,7 +219,6 @@ async function startSocket(phone, opts = {}) {
   const auth = await useMultiFileAuthState(dir);
   const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, markOnlineOnConnect: false, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 25000 });
   const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, kingCode: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
-  // Clear old timer if re-starting same phone
   const old = sessions.get(phone);
   if (old?.reconnectTimer) clearTimeout(old.reconnectTimer);
   sessions.set(phone, entry);
@@ -272,12 +262,39 @@ async function startSocket(phone, opts = {}) {
   return { entry, code: null, kingCode: null };
 }
 
-// ===== WEB ROUTES - THIS IS WHAT RENDER / red.tech NEEDS ✅ =====
+// ===== HELPER: Find channel JID from any link format =====
+async function resolveChannelJid(sock, link) {
+  const raw = String(link || '').trim();
+  // Format 1: https://whatsapp.com/channel/0029Va...
+  // Format 2: 0029Va...
+  // Format 3: https://whatsapp.com/channel/xxxx (invite code)
+  let id = raw;
+  if (raw.includes('/channel/')) id = raw.split('/channel/')[1].split(/[?\/\s]/)[0];
+  id = id.trim();
+  if (!id) return null;
+  // If it looks like a JID already: 120207...@newsletter
+  if (id.includes('@newsletter')) return id;
+  // If it looks like a real channel ID (starts with 120207 or 0029...)
+  // Try direct: Baileys can fetch by ID
+  try {
+    const meta = await sock.newsletterMetadata('jid', id.includes('@') ? id : id + '@newsletter');
+    if (meta?.id) return meta.id;
+  } catch (_) {}
+  // Try as invite code
+  try {
+    const meta2 = await sock.newsletterMetadata('invite', id);
+    if (meta2?.id) return meta2.id;
+  } catch (_) {}
+  // Fallback: if starts with 0029, it IS the invite - construct jid guess
+  // Baileys newsletterFetch needs real JID, so return invite for follow attempt
+  return { invite: id };
+}
+
+// ===== WEB ROUTES =====
 app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p><p>Bots: ${sessions.size}</p>`));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size, uptime: Math.floor(process.uptime()) }));
 app.get('/api/pair', (_req, res) => res.json({ success: false, error: 'Use POST /api/pair' }));
 
-// ===== /api/pair - RETURNS KINGMDXX =====
 app.post('/api/pair', bridgeAuth, async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber);
   if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Enter valid number' });
@@ -305,10 +322,83 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
   } catch (e) { return res.status(502).json({ success: false, error: e.message }); }
   finally { pending.delete(phone); }
 });
+
 app.get('/api/status', (req, res) => { const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)); const bots = {}; numbers.forEach(n => { const s = sessions.get(n); bots[n] = { state: stateFor(n), connected: Boolean(s?.connected), kingCode: s?.kingCode || null }; }); res.json({ success: true, bots }); });
+
 app.delete('/api/session/:phone', bridgeAuth, async (req, res) => { const phone = phoneDigits(req.params.phone); const cur = sessions.get(phone); if (cur?.sock) { try { await cur.sock.logout(); } catch (_) { try { cur.sock.end(undefined); } catch (_) {} } } sessions.delete(phone); await fs.promises.rm(sessionPath(phone), { recursive: true, force: true }); res.json({ success: true, state: 'offline' }); });
 
-// 404 + error handler so Render never hangs
+// ===== ✅ CHANNEL REACT - THIS WAS MISSING! MUST BE BEFORE 404! =====
+app.post('/api/channel-react', bridgeAuth, async (req, res) => {
+  const { link, emoji, amount, phoneNumbers } = req.body || {};
+  if (!link) return res.status(400).json({ success: false, error: 'Missing channel link' });
+  console.log('[KING MD] Channel-React request:', link, 'phones:', phoneNumbers, 'amount:', amount);
+
+  // 1. Pick sock: try requested phones first, then any online
+  let sock = null;
+  let usedPhone = null;
+  const candidates = (Array.isArray(phoneNumbers) ? phoneNumbers : []).map(phoneDigits).filter(Boolean);
+  for (const ph of candidates) {
+    const e = sessions.get(ph);
+    if (e?.connected && e.sock) { sock = e.sock; usedPhone = ph; break; }
+  }
+  if (!sock) {
+    for (const e of sessions.values()) { if (e.connected && e.sock) { sock = e.sock; usedPhone = e.phone; break; } }
+  }
+  if (!sock) return res.status(409).json({ success: false, error: 'No bot online. Pair your bot first, then try again.' });
+
+  try {
+    // 2. Resolve channel JID
+    const resolved = await resolveChannelJid(sock, link);
+    if (!resolved) return res.status(400).json({ success: false, error: 'Channel not found. Check link.' });
+    let channelJid = typeof resolved === 'string' ? resolved : null;
+    if (!channelJid && resolved.invite) {
+      // Need to follow first to get JID
+      try {
+        const meta = await sock.newsletterMetadata('invite', resolved.invite);
+        channelJid = meta?.id;
+        if (channelJid) { try { await sock.newsletterFollow(channelJid); } catch (_) {} }
+      } catch (e) { console.log('[KING MD] Invite resolve fail:', e.message); }
+    }
+    if (!channelJid) return res.status(400).json({ success: false, error: 'Could not find channel. Make sure bot follows it. Open WhatsApp on bot number > Channels > Follow this channel, then try again.' });
+
+    // 3. Ensure bot follows channel
+    try { await sock.newsletterFollow(channelJid); } catch (_) {}
+    try { await sock.newsletterFetch(channelJid); } catch (_) {}
+
+    // 4. React!
+    const EMOJIS = ['❤️','🔥','👍','😂','😮','😢','🙏'];
+    const total = Math.max(1, Math.min(Number(amount) || 1, 10));
+    let sent = 0;
+    let lastErr = '';
+    for (let i = 0; i < total; i++) {
+      const e = emoji || EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+      try {
+        // Baileys: newsletterReact(jid, emoji)
+        if (typeof sock.newsletterReact === 'function') {
+          await sock.newsletterReact(channelJid, e);
+        } else if (typeof sock.newsletterReactMessage === 'function') {
+          await sock.newsletterReactMessage(channelJid, e);
+        } else {
+          throw new Error('newsletterReact not available in this Baileys version');
+        }
+        sent++;
+        console.log(`[KING MD] React ${sent}/${total} ${e} on ${channelJid} via ${usedPhone}`);
+      } catch (err) {
+        lastErr = err.message || String(err);
+        console.log('[KING MD] React fail:', lastErr);
+      }
+      if (i < total - 1) await new Promise(r => setTimeout(r, 900));
+    }
+
+    if (!sent) return res.status(500).json({ success: false, error: 'Engine failed to react: ' + lastErr + '. Make sure YOUR bot follows that Channel first!' });
+    return res.json({ success: true, reactionsSent: sent, sent, usedPhone, channelJid });
+  } catch (e) {
+    console.log('[KING MD] Channel-react error:', e.message);
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ===== 404 + error handler - MUST BE LAST! =====
 app.use((req, res) => res.status(404).json({ success: false, error: 'Not found: ' + req.path }));
 app.use((err, req, res, next) => { console.log('[KING MD] Express error:', err.message); res.status(500).json({ success: false, error: err.message }); });
 
@@ -333,7 +423,6 @@ setInterval(async () => {
 process.on('uncaughtException', e => console.log('[KING MD] Uncaught:', e.message));
 process.on('unhandledRejection', e => console.log('[KING MD] Rejection:', e?.message));
 
-// ===== FIXED: LISTEN FIRST, THEN RESTORE - Render sees PORT instantly ✅ =====
 app.listen(PORT, '0.0.0.0', () => {
   console.log('[KING MD] Listening on ' + PORT + ' | Website: ' + WEBSITE);
   restoreSessions().catch(e => console.log('[KING MD] Restore failed:', e.message));
