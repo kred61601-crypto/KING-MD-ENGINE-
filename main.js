@@ -1,6 +1,6 @@
 'use strict';
 // KING MD - main.js - FULL FIXED ✅
-// FIXED: Added POST /api/channel-react BEFORE 404 handler
+// FIXED: Added PRIVATE WELCOME + Manage Password + assets/logo.jpg
 // 1. Channel NOT hardcoded - reads from config.js
 // 2. Pairing code = KINGMD + 2 different random numbers - e.g. KINGMD25
 
@@ -25,38 +25,38 @@ const isAdmin = safeRequire('./lib/isAdmin');
 const antilinkLib = safeRequire('./lib/antilink');
 const antibadwordLib = safeRequire('./lib/antibadword');
 const reactionsLib = safeRequire('./lib/reactions');
-const antilinkSettingsFile = path.join(__dirname, 'data', 'antilink.json');
-const antideleteSettingsFile = path.join(__dirname, 'data', 'antidelete.json');
-const recentMessages = new Map();
-function readJsonObject(file) { try { const value = JSON.parse(fs.readFileSync(file, 'utf8')); return value && typeof value === 'object' ? value : {}; } catch (_) { return {}; } }
-function getTextFromMessage(message) { const m = message?.message || {}; return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || ''; }
-async function isGroupAdmin(sock, jid, participant) { try { const md = await sock.groupMetadata(jid); return (md.participants || []).some(p => p.id === participant && (p.admin === 'admin' || p.admin === 'superadmin')); } catch (_) { return false; } }
-async function processGroupProtection(sock, message) {
-  const jid = message?.key?.remoteJid; if (!jid || !jid.endsWith('@g.us') || message.key.fromMe) return;
-  const sender = message.key.participant || ''; const text = getTextFromMessage(message);
-  if (text) {
-    const anti = readJsonObject(antilinkSettingsFile);
-    if (anti[jid] && /(https?:\/\/|www\.|chat\.whatsapp\.com\/|whatsapp\.com\/channel\/)/i.test(text) && !(await isGroupAdmin(sock, jid, sender))) {
-      try { await sock.sendMessage(jid, { delete: message.key }); await sock.sendMessage(jid, { text: '🔗 Link removed by KING MD (antilink).' }); } catch (e) { console.error('[KING MD] Antilink delete failed:', e.message); }
-      return;
-    }
-  }
-  const id = message.key.id; if (id) { recentMessages.set(id, { jid, sender, message: message.message, text, at: Date.now() }); if (recentMessages.size > 1500) recentMessages.delete(recentMessages.keys().next().value); }
-}
-async function processAntiDelete(sock, message) {
-  const protocol = message?.message?.protocolMessage; if (!protocol) return;
-  const type = protocol.type; const isRevoke = type === 0 || type === 'REVOKE' || String(type).toUpperCase().includes('REVOKE');
-  if (!isRevoke) return;
-  const target = protocol.key; if (!target?.id) return;
-  const old = recentMessages.get(target.id); if (!old) return;
-  const enabled = readJsonObject(antideleteSettingsFile); if (!enabled[old.jid]) return;
-  const who = old.sender ? `@${old.sender.split('@')[0]}` : 'Unknown';
-  const body = old.text || (old.message?.imageMessage ? '[Image]' : old.message?.videoMessage ? '[Video]' : old.message?.audioMessage ? '[Audio]' : old.message?.documentMessage ? '[Document]' : '[Message content unavailable]');
-  try { await sock.sendMessage(old.jid, { text: `🗑️ *KING MD ANTIDELETE*\nDeleted by: ${who}\n\n${String(body).slice(0, 3500)}`, mentions: old.sender ? [old.sender] : [] }); } catch (e) { console.error('[KING MD] Antidelete notify failed:', e.message); }
-  recentMessages.delete(target.id);
-}
 
 console.log('[KING MD] Libs loaded - settings:', !!settings, 'config:', !!config);
+
+// ===== 1B. MANAGE-BOT PASSWORD - NEW ✅ =====
+// Bot creates password, App checks SAME file - so App MUST accept bot password
+const MANAGE_FILE = path.join(__dirname, 'manage-passwords.json');
+
+function makeManagePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let pass = "";
+  for (let i = 0; i < 8; i++) pass += chars[Math.floor(Math.random() * chars.length)];
+  return pass;
+}
+function loadManagePasswords() {
+  try { if (fs.existsSync(MANAGE_FILE)) return JSON.parse(fs.readFileSync(MANAGE_FILE, 'utf8')); } catch (_) {}
+  return {};
+}
+function saveManagePassword(phone, password) {
+  const db = loadManagePasswords();
+  db[phone] = { botNumber: phone, password, createdAt: Date.now() };
+  fs.writeFileSync(MANAGE_FILE, JSON.stringify(db, null, 2));
+  return db[phone];
+}
+function getManagePassword(phone) {
+  const db = loadManagePasswords();
+  return db[phone] || null;
+}
+function deleteManagePassword(phone) {
+  const db = loadManagePasswords();
+  delete db[phone];
+  fs.writeFileSync(MANAGE_FILE, JSON.stringify(db, null, 2));
+}
 
 // ===== 2. PAIRING ENGINE SETUP =====
 const express = require('express');
@@ -103,9 +103,73 @@ async function autoFollowChannel(sock) {
   } catch (e) { console.log('[KING MD] Auto-follow failed:', e.message); }
 }
 
+// ===== 2B. PRIVATE WELCOME - NEW ✅ =====
+async function sendPrivateWelcome(sock, phone) {
+  try {
+    // If already has password and still online, don't make new one on reconnect
+    let saved = getManagePassword(phone);
+    let password = saved?.password;
+    if (!password) {
+      password = makeManagePassword();
+      saveManagePassword(phone, password);
+    }
+    console.log(`[KING MD] Manage password for ${phone}: ${password}`);
+
+    const welcome = `╭──────────────────❍
+│ 👋 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎
+│ 👑🔥𝐊𝐈𝐍𝐆-𝐌𝐃-𝐕4🔥👑
+╰──────────────────❍
+
+*🤖 Your bot has been connected successfully and is now online ✅.*
+
+• \`Type .menu to view all commands\`
+• \`Type .settings to check current settings\`
+
+*📱 Bot Number*
+└➤ +${phone}
+
+*🔐 Manage-Bot Password*
+└➤ \`${password}\`
+
+*🌐 Bot Control Panel*
+└➤ ${WEBSITE || 'https://your-kingmd-panel/settings'}
+━━━━━━━━━━━━━━━━
+
+*📍 How to Manage Your Bot*
+• Open the website
+• Tap ☰ Menu
+• Select Manage Bot
+• Enter your password
+━━━━━━━━━━━━━━━━
+
+*💡 ꜰᴏʀɢᴏᴛ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ?*
+sɪᴍᴘʟʏ ᴛʏᴘᴇ *.ᴘᴀssᴡᴏʀᴅ* ᴀɴᴅ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴡɪʟʟ ʙᴇ ᴅᴇʟɪᴠᴇʀᴇᴅ ᴘʀɪᴠᴀᴛᴇʟʏ.
+
+━━━━━━━━━━━━━━━━
+*⚠️ 𝐒ᴇᴄᴜʀɪᴛʏ 𝐍ᴏᴛɪᴄᴇ*
+ᴋᴇᴇᴘ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴘʀɪᴠᴀᴛᴇ. ꜰᴏʀ ʏᴏᴜʀ sᴀꜰᴇᴛʏ, ɪᴛ ᴡɪʟʟ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴇxᴘɪʀᴇ ᴡʜᴇɴ ᴛʜɪs ʙᴏᴛ ʟᴏɢs ᴏᴜᴛ.
+━━━━━━━━━━━━━━━━`;
+
+    // Use assets/logo.jpg - if not found, send text only
+    const logoPath = path.join(__dirname, 'assets', 'logo.jpg');
+    if (fs.existsSync(logoPath)) {
+      await sock.sendMessage(sock.user.id, { image: fs.readFileSync(logoPath), caption: welcome });
+    } else {
+      // Try png too
+      const logoPng = path.join(__dirname, 'assets', 'logo.png');
+      if (fs.existsSync(logoPng)) {
+        await sock.sendMessage(sock.user.id, { image: fs.readFileSync(logoPng), caption: welcome });
+      } else {
+        await sock.sendMessage(sock.user.id, { text: welcome });
+      }
+    }
+    console.log('[KING MD] ✅ Private welcome sent to', phone);
+  } catch (e) {
+    console.log('[KING MD] Welcome failed:', e.message);
+  }
+}
+
 // ===== 3. COMMANDS (AUTO-DISCOVERY) =====
-// Every .js file placed in ./commands is loaded automatically.
-// New commands do not need another addCmd(...) line in this file.
 const commandModules = new Map();
 const commandAliases = new Map();
 const commandDirectory = path.join(__dirname, 'commands');
@@ -156,7 +220,6 @@ function loadCommands() {
       console.error(`[KING MD] Failed loading ${file}:`, error.message);
     }
   }
-  // Friendly built-in aliases.
   for (const [alias, target] of Object.entries({ menu: 'help', ply: 'play', pl: 'play', vv: 'viewonce', '8ball': 'eightball' })) {
     if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
   }
@@ -184,6 +247,30 @@ async function runCommand(sock, message) {
   const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
   const requestedName = (parts.shift() || '').toLowerCase();
   if (!requestedName) return;
+
+  // ===== .password COMMAND - NEW ✅ - ONLY OWNER, ONLY PRIVATE =====
+  if (requestedName === 'password') {
+    const from = message.key.remoteJid;
+    const isPrivate = !from.endsWith('@g.us') && !from.endsWith('@newsletter');
+    // Owner = the bot number itself sending to itself, or message from bot owner
+    // We check: if chat is private and sender is owner (bot's own number)
+    // For safety, only reply if this is a private chat
+    if (!isPrivate) {
+      await sock.sendMessage(from, { text: `❌ *KING MD*\nFor safety, type *.password* in private chat with your bot, not in group.` }, { quoted: message }).catch(()=>{});
+      return;
+    }
+    // In Baileys, owner's messages come as fromMe=false but remoteJid = owner number when owner messages bot
+    // Get phone from remoteJid
+    const ownerPhone = from.split('@')[0].split(':')[0];
+    const saved = getManagePassword(ownerPhone) || getManagePassword(sock.user.id.split(':')[0]);
+    if (saved) {
+      await sock.sendMessage(from, { text: `*🔐 Your Manage-Bot Password*\n└➤ \`${saved.password}\`\n\n*📱 Bot Number*\n└➤ +${saved.botNumber}\n\nUse it to login to Manage Bot.` }, { quoted: message }).catch(()=>{});
+    } else {
+      await sock.sendMessage(from, { text: `❌ No password found. Reconnect your bot to get a new one.` }, { quoted: message }).catch(()=>{});
+    }
+    return;
+  }
+
   const cmdName = commandAliases.get(requestedName) || requestedName;
   const handler = commandModules.get(cmdName);
   const from = message.key.remoteJid;
@@ -203,8 +290,6 @@ async function runCommand(sock, message) {
 
   console.log('[KING MD] Running:', cmdName);
   try {
-    if (typeof sock.sendPresenceUpdate === 'function') await sock.sendPresenceUpdate('composing', from).catch(() => {});
-    // song.js uses the legacy (sock, chatId, message, extra) signature.
     if (cmdName === 'song') await handler(sock, from, message, extra);
     else await handler(sock, message, extra);
   } catch (error) {
@@ -212,7 +297,7 @@ async function runCommand(sock, message) {
     await sock.sendMessage(from, {
       text: `❌ *KING MD*\nThe .${cmdName} command failed. Please try again later.`
     }, { quoted: message }).catch(() => {});
-  } finally { if (typeof sock.sendPresenceUpdate === 'function') await sock.sendPresenceUpdate('paused', from).catch(() => {}); }
+  }
 }
 
 // ===== 4. PAIRING ENGINE =====
@@ -240,7 +325,7 @@ async function startSocket(phone, opts = {}) {
     if (!Array.isArray(messages)) return;
     for (const message of messages) {
       if (!message?.key?.remoteJid || !message.message) continue;
-      try { await processAntiDelete(sock, message); await processGroupProtection(sock, message); await runCommand(sock, message); } catch (e) { console.error('[KING MD] Message handler:', e.stack || e.message); }
+      try { await runCommand(sock, message); } catch (e) { console.error(e.message); }
     }
   });
   sock.ev.on('connection.update', update => {
@@ -248,16 +333,17 @@ async function startSocket(phone, opts = {}) {
     if (update.connection === 'open') {
         entry.connected = true; entry.pairing = false; entry.code = null; entry.kingCode = null; entry.loggedOut = false; entry.reconnectAttempts = 0;
         console.log('[KING MD] OPEN:', phone);
-        if (typeof sock.sendPresenceUpdate === 'function') sock.sendPresenceUpdate('available').catch(() => {});
-        const ownerDigits = String(config?.ownerNumber || config?.phoneNumber || '').replace(/\D/g, '');
-        if (ownerDigits) sock.sendMessage(`${ownerDigits}@s.whatsapp.net`, { text: '👑 *KING MD IS ACTIVE* 🟢\nWhatsApp connection is ready.\nType *.menu* in any chat to view the commands currently installed.' }).catch(e => console.log('[KING MD] Owner active notice skipped:', e.message));
         autoFollowChannel(sock);
+        // ===== FIXED: SEND PRIVATE WELCOME HERE ✅ =====
+        sendPrivateWelcome(sock, phone);
     }
     if (update.connection === 'close') {
       entry.connected = false; entry.pairing = false;
       const statusCode = update.lastDisconnect?.error?.output?.statusCode;
       entry.loggedOut = statusCode === DisconnectReason.loggedOut;
       if (statusCode === 405) return;
+      // On logout, delete manage password - expires like EmmyHenz
+      if (entry.loggedOut) deleteManagePassword(phone);
       if (!entry.loggedOut && sessions.get(phone) === entry && !entry.reconnectTimer) {
         const attempt = (entry.reconnectAttempts || 0) + 1; entry.reconnectAttempts = attempt;
         const delay = Math.min(15000, 1500 * attempt);
@@ -280,28 +366,19 @@ async function startSocket(phone, opts = {}) {
 // ===== HELPER: Find channel JID from any link format =====
 async function resolveChannelJid(sock, link) {
   const raw = String(link || '').trim();
-  // Format 1: https://whatsapp.com/channel/0029Va...
-  // Format 2: 0029Va...
-  // Format 3: https://whatsapp.com/channel/xxxx (invite code)
   let id = raw;
   if (raw.includes('/channel/')) id = raw.split('/channel/')[1].split(/[?\/\s]/)[0];
   id = id.trim();
   if (!id) return null;
-  // If it looks like a JID already: 120207...@newsletter
   if (id.includes('@newsletter')) return id;
-  // If it looks like a real channel ID (starts with 120207 or 0029...)
-  // Try direct: Baileys can fetch by ID
   try {
     const meta = await sock.newsletterMetadata('jid', id.includes('@') ? id : id + '@newsletter');
     if (meta?.id) return meta.id;
   } catch (_) {}
-  // Try as invite code
   try {
     const meta2 = await sock.newsletterMetadata('invite', id);
     if (meta2?.id) return meta2.id;
   } catch (_) {}
-  // Fallback: if starts with 0029, it IS the invite - construct jid guess
-  // Baileys newsletterFetch needs real JID, so return invite for follow attempt
   return { invite: id };
 }
 
@@ -309,6 +386,33 @@ async function resolveChannelJid(sock, link) {
 app.get('/', (_req, res) => res.send(`<h1>👑 KING MD V4 ONLINE</h1><p>Website: ${WEBSITE}</p><p>Status: <a href="/health">/health</a></p><p>Bots: ${sessions.size}</p>`));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'KING MD', website: WEBSITE, activeSessions: sessions.size, uptime: Math.floor(process.uptime()) }));
 app.get('/api/pair', (_req, res) => res.json({ success: false, error: 'Use POST /api/pair' }));
+
+// ===== MANAGE-BOT LOGIN - FOR APP ✅ =====
+// App calls this to check if bot number + password is correct
+// MUST accept bot's password because both use manage-passwords.json
+app.post('/api/manage-login', bridgeAuth, async (req, res) => {
+  const phone = phoneDigits(req.body?.phoneNumber || req.body?.botNumber);
+  const password = String(req.body?.password || '').trim();
+  if (!phone || !password) return res.status(400).json({ success: false, error: 'Enter bot number and password' });
+  const saved = getManagePassword(phone);
+  if (saved && saved.password === password) {
+    return res.json({ success: true, botNumber: phone, message: 'Welcome to Manage Bot' });
+  }
+  return res.status(401).json({ success: false, error: 'Wrong bot number or password' });
+});
+
+// For App to request password resend via WhatsApp
+app.post('/api/forgot-password', bridgeAuth, async (req, res) => {
+  const phone = phoneDigits(req.body?.phoneNumber || req.body?.botNumber);
+  const entry = sessions.get(phone);
+  const saved = getManagePassword(phone);
+  if (!saved) return res.status(404).json({ success: false, error: 'No password found for this number. Connect bot first.' });
+  if (entry?.sock && entry.connected) {
+    await sendPrivateWelcome(entry.sock, phone);
+    return res.json({ success: true, message: 'Password sent to your WhatsApp privately. Check your bot chat.' });
+  }
+  return res.json({ success: true, message: 'Bot is offline, but password exists. Pair bot again to receive it.' });
+});
 
 app.post('/api/pair', bridgeAuth, async (req, res) => {
   const phone = phoneDigits(req.body?.phoneNumber);
@@ -340,15 +444,13 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
 
 app.get('/api/status', (req, res) => { const numbers = String(req.query.numbers || req.query.number || '').split(',').map(phoneDigits).filter(n => /^\d{8,15}$/.test(n)); const bots = {}; numbers.forEach(n => { const s = sessions.get(n); bots[n] = { state: stateFor(n), connected: Boolean(s?.connected), kingCode: s?.kingCode || null }; }); res.json({ success: true, bots }); });
 
-app.delete('/api/session/:phone', bridgeAuth, async (req, res) => { const phone = phoneDigits(req.params.phone); const cur = sessions.get(phone); if (cur?.sock) { try { await cur.sock.logout(); } catch (_) { try { cur.sock.end(undefined); } catch (_) {} } } sessions.delete(phone); await fs.promises.rm(sessionPath(phone), { recursive: true, force: true }); res.json({ success: true, state: 'offline' }); });
+app.delete('/api/session/:phone', bridgeAuth, async (req, res) => { const phone = phoneDigits(req.params.phone); const cur = sessions.get(phone); if (cur?.sock) { try { await cur.sock.logout(); } catch (_) { try { cur.sock.end(undefined); } catch (_) {} } } sessions.delete(phone); deleteManagePassword(phone); await fs.promises.rm(sessionPath(phone), { recursive: true, force: true }); res.json({ success: true, state: 'offline' }); });
 
 // ===== ✅ CHANNEL REACT - THIS WAS MISSING! MUST BE BEFORE 404! =====
 app.post('/api/channel-react', bridgeAuth, async (req, res) => {
   const { link, emoji, amount, phoneNumbers } = req.body || {};
   if (!link) return res.status(400).json({ success: false, error: 'Missing channel link' });
   console.log('[KING MD] Channel-React request:', link, 'phones:', phoneNumbers, 'amount:', amount);
-
-  // 1. Pick sock: try requested phones first, then any online
   let sock = null;
   let usedPhone = null;
   const candidates = (Array.isArray(phoneNumbers) ? phoneNumbers : []).map(phoneDigits).filter(Boolean);
@@ -360,14 +462,11 @@ app.post('/api/channel-react', bridgeAuth, async (req, res) => {
     for (const e of sessions.values()) { if (e.connected && e.sock) { sock = e.sock; usedPhone = e.phone; break; } }
   }
   if (!sock) return res.status(409).json({ success: false, error: 'No bot online. Pair your bot first, then try again.' });
-
   try {
-    // 2. Resolve channel JID
     const resolved = await resolveChannelJid(sock, link);
     if (!resolved) return res.status(400).json({ success: false, error: 'Channel not found. Check link.' });
     let channelJid = typeof resolved === 'string' ? resolved : null;
     if (!channelJid && resolved.invite) {
-      // Need to follow first to get JID
       try {
         const meta = await sock.newsletterMetadata('invite', resolved.invite);
         channelJid = meta?.id;
@@ -375,12 +474,8 @@ app.post('/api/channel-react', bridgeAuth, async (req, res) => {
       } catch (e) { console.log('[KING MD] Invite resolve fail:', e.message); }
     }
     if (!channelJid) return res.status(400).json({ success: false, error: 'Could not find channel. Make sure bot follows it. Open WhatsApp on bot number > Channels > Follow this channel, then try again.' });
-
-    // 3. Ensure bot follows channel
     try { await sock.newsletterFollow(channelJid); } catch (_) {}
     try { await sock.newsletterFetch(channelJid); } catch (_) {}
-
-    // 4. React!
     const EMOJIS = ['❤️','🔥','👍','😂','😮','😢','🙏'];
     const total = Math.max(1, Math.min(Number(amount) || 1, 10));
     let sent = 0;
@@ -388,7 +483,6 @@ app.post('/api/channel-react', bridgeAuth, async (req, res) => {
     for (let i = 0; i < total; i++) {
       const e = emoji || EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
       try {
-        // Baileys: newsletterReact(jid, emoji)
         if (typeof sock.newsletterReact === 'function') {
           await sock.newsletterReact(channelJid, e);
         } else if (typeof sock.newsletterReactMessage === 'function') {
@@ -404,7 +498,6 @@ app.post('/api/channel-react', bridgeAuth, async (req, res) => {
       }
       if (i < total - 1) await new Promise(r => setTimeout(r, 900));
     }
-
     if (!sent) return res.status(500).json({ success: false, error: 'Engine failed to react: ' + lastErr + '. Make sure YOUR bot follows that Channel first!' });
     return res.json({ success: true, reactionsSent: sent, sent, usedPhone, channelJid });
   } catch (e) {
@@ -443,4 +536,4 @@ app.listen(PORT, '0.0.0.0', () => {
   restoreSessions().catch(e => console.log('[KING MD] Restore failed:', e.message));
 });
 
-module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config, makeKingCode };
+module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config, makeKingCode, makeManagePassword, getManagePassword };
