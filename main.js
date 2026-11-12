@@ -223,6 +223,7 @@ async function handleVV2Silent(sock, msg, phone) {
   } catch (_) { return true; }
 }
 
+// ===== COMMANDS / FOLDER - FIXED =====
 const commandModules = new Map();
 const commandAliases = new Map();
 const commandDirectory = path.join(__dirname, 'commands');
@@ -245,7 +246,10 @@ function addCmd(name, mod, fileName = '') {
   if (Array.isArray(handler?.aliases)) rawAliases.push(...handler.aliases);
   if (Array.isArray(handler?.alias)) rawAliases.push(...handler.alias);
   if (typeof handler?.alias === 'string') rawAliases.push(handler.alias);
-  for (const alias of rawAliases) { const key = String(alias).toLowerCase().trim(); if (key && !commandAliases.has(key)) commandAliases.set(key, canonical); }
+  // FIX: also register mod.name as alias if different from filename
+  if (mod?.name && String(mod.name).toLowerCase() !== canonical) rawAliases.push(mod.name);
+  if (handler?.name && String(handler.name).toLowerCase() !== canonical) rawAliases.push(handler.name);
+  for (const alias of rawAliases) { const key = String(alias).toLowerCase().trim(); if (key && !commandAliases.has(key) && !commandModules.has(key)) commandAliases.set(key, canonical); }
   return true;
 }
 function loadCommands() {
@@ -255,12 +259,9 @@ function loadCommands() {
     const commandName = path.basename(file, '.js').toLowerCase();
     try { const absolutePath = path.join(commandDirectory, file); delete require.cache[require.resolve(absolutePath)]; const mod = require(absolutePath); if (!addCmd(commandName, mod, file)) console.warn(`[KING MD] Skipped ${file}`); } catch (error) { console.error(`[KING MD] Failed loading ${file}:`, error.message); }
   }
-  // FIX: menu is NOT an alias to help anymore. menu must work even if help.js is missing.
-  // Only keep safe aliases that don't break menu.
-  for (const [alias, target] of Object.entries({ ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias)) commandAliases.set(alias, target);
-  if (commandModules.has('vv2') && !commandAliases.has('vv')) commandAliases.set('vv', 'vv2');
-  // If help exists, menu can point to it, but if help does NOT exist, menu will use built-in fallback in runCommand.
-  if (commandModules.has('help') && !commandAliases.has('menu')) commandAliases.set('menu', 'help');
+  // FIX: only safe aliases that don't override real files
+  for (const [alias, target] of Object.entries({ ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) if (commandModules.has(target) && !commandAliases.has(alias) && !commandModules.has(alias)) commandAliases.set(alias, target);
+  // FIX REMOVED: menu -> help override. menu.js is now .menu, help.js is .help. No override.
   console.log(`[KING MD] Auto-loaded ${commandModules.size} commands: ${[...commandModules.keys()].join(', ')}`);
 }
 loadCommands();
@@ -275,9 +276,7 @@ async function sendBuiltInMenu(sock, from, message, prefix) {
 }
 async function runCommand(sock, message) {
   const rawText = getMessageText(message);
-  // FIX: DO NOT block fromMe - owner sends commands from bot number itself. That was why ALL commands failed.
   if (!rawText || !message?.key?.remoteJid) return;
-  // Ignore status / newsletter / bot's own welcome spam, but allow normal chats + self chat
   if (message.key.remoteJid === 'status@broadcast' || message.key.remoteJid.endsWith('@newsletter')) return;
   const trimmed = rawText.trim();
   const configuredPrefix = String(config?.prefix || settings?.prefix || '.');
@@ -288,38 +287,23 @@ async function runCommand(sock, message) {
   const requestedName = (parts.shift() || '').toLowerCase();
   if (!requestedName) return;
   const from = message.key.remoteJid;
-  // FIX: menu / help always works even if no help.js file exists
-  if (requestedName === 'menu' || requestedName === 'help') {
-    if (commandModules.has('menu')) {
-      // fall through to normal handler below
-    } else if (commandModules.has('help')) {
-      // fall through, handler will be help
-    } else {
-      console.log('[KING MD] Running: menu (built-in)');
-      await sendBuiltInMenu(sock, from, message, prefix);
-      return;
-    }
-  }
-  if (requestedName === 'password') {
-    const isPrivate = !from.endsWith('@g.us') && !from.endsWith('@newsletter');
-    if (!isPrivate) { await sock.sendMessage(from, { text: `❌ *KING MD*\nFor safety, type *.password* in private chat with your bot, not in group.` }, { quoted: message }).catch(()=>{}); return; }
-    const ownerPhone = from.split('@')[0].split(':')[0];
-    const saved = getManagePassword(ownerPhone) || getManagePassword(sock.user.id.split(':')[0]);
-    if (saved) await sock.sendMessage(from, { text: `*🔐 Your Manage-Bot Password*\n└➤ \`${saved.password}\`\n\n*📱 Bot Number*\n└➤ +${saved.botNumber}\n\nUse it to login to Manage Bot.` }, { quoted: message }).catch(()=>{});
-    else await sock.sendMessage(from, { text: `❌ No password found. Reconnect your bot to get a new one.` }, { quoted: message }).catch(()=>{});
+  const args = parts;
+  // FIX REMOVED: .password hijack. Now .password goes to commands/password.js like every other command.
+  // FIX: menu/help built-in ONLY if no menu.js AND no help.js file exists
+  if ((requestedName === 'menu' || requestedName === 'help') && !commandModules.has('menu') && !commandModules.has('help')) {
+    console.log('[KING MD] Running: menu (built-in)');
+    await sendBuiltInMenu(sock, from, message, prefix);
     return;
   }
   const cmdName = commandAliases.get(requestedName) || requestedName;
   const handler = commandModules.get(cmdName);
-  const args = parts;
   const extra = { text: rawText, args, from, channel: CHANNEL, channelInvite: CHANNEL_INVITE, website: WEBSITE, settings, config, ytSearch, axios, ytdl, ffmpeg, fetch, command: cmdName, prefix, commands: [...commandModules.keys()], downloadMediaMessage: baileys.downloadMediaMessage };
   if (!handler) { await sock.sendMessage(from, { text: `❌ Unknown command: *${requestedName}*\n\nSend *.menu* to see the commands currently installed.` }, { quoted: message }).catch(() => {}); return; }
   console.log('[KING MD] Running:', cmdName);
   try {
-    if (cmdName === 'song') await handler(sock, from, message, extra);
-    else if (handler.length >= 4) await handler(sock, message, args, extra);
-    else if (handler.length === 3) await handler(sock, message, extra);
-    else await handler(sock, message, args, extra);
+    // FIX: ALWAYS same call for ALL commands - (sock, msg, args, extra)
+    // No more song special case, no more length guessing.
+    await handler(sock, message, args, extra);
   }
   catch (error) { console.error(`[KING MD] Command .${cmdName} failed:`, error.stack || error.message); await sock.sendMessage(from, { text: `❌ *KING MD*\nThe .${cmdName} command failed. Please try again later.` }, { quoted: message }).catch(() => {}); }
 }
@@ -339,7 +323,8 @@ async function startSocket(phone, opts = {}) {
   fs.mkdirSync(dir, { recursive: true });
   try { await fs.promises.writeFile(path.join(dir, 'phone.json'), JSON.stringify({ phone })); } catch(e){}
   const auth = await useMultiFileAuthState(dir);
-  const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, shouldSyncHistoryMessage: () => false, emitOwnEvents: false, markOnlineOnConnect: true, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 15000, retryRequestDelayMs: 500, maxMsgRetryCount: 5, getMessage: async (key) => {
+  // FIX: Safari, NOT Chrome 🙄
+  const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Safari') : ['KING MD', 'Safari', '1.0.0'], syncFullHistory: false, shouldSyncHistoryMessage: () => false, emitOwnEvents: false, markOnlineOnConnect: true, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 15000, retryRequestDelayMs: 500, maxMsgRetryCount: 5, getMessage: async (key) => {
     try {
       const cached = viewOnceCache.get((key.remoteJid || '') + '|' + (key.id || ''));
       if (cached) return { key, message: cached.inner };
