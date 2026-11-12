@@ -1,3 +1,4 @@
+'use strict';
 const fs = require('fs');
 const path = require('path');
 
@@ -32,7 +33,7 @@ module.exports = {
   alias: ['pass', 'botpassword', 'managepassword'],
   desc: 'Show or change Manage Bot password',
   category: 'owner',
-  async execute(sock, msg, args) {
+  async execute(sock, msg, args, extra = {}) {
     await react(sock, msg, '🔐');
 
     const from = msg.key.remoteJid;
@@ -47,8 +48,10 @@ module.exports = {
     }
 
     const passwords = loadPasswords();
-    const current = passwords[botNumber]?.password || passwords[botNumber] || '';
-    const newPass = String(args[0] || '').trim();
+    const saved = passwords[botNumber];
+    const current = typeof saved === 'string' ? saved : saved?.password || '';
+
+    const newPass = String((args && args[0]) || '').trim();
 
     if (!newPass) {
       if (!current) {
@@ -70,8 +73,10 @@ module.exports = {
     }
 
     passwords[botNumber] = {
+      botNumber,
       password: newPass,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      createdAt: saved?.createdAt || Date.now()
     };
     savePasswords(passwords);
 
