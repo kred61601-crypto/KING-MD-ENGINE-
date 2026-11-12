@@ -130,74 +130,96 @@ sɪᴍᴘʟʏ ᴛʏᴘᴇ *.ᴘᴀssᴡᴏʀᴅ* ᴀɴᴅ ʏᴏᴜʀ ᴘᴀssᴡ
 ᴋᴇᴇᴘ ʏᴏᴜʀ ᴘᴀssᴡᴏʀᴅ ᴘʀɪᴠᴀᴛᴇ. ꜰᴏʀ ʏᴏᴜʀ sᴀꜰᴇᴛʏ, ɪᴛ ᴡɪʟʟ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴇxᴘɪʀᴇ ᴡʜᴇɴ ᴛʜɪs ʙᴏᴛ ʟᴏɢs ᴏᴜᴛ.
 ━━━━━━━━━━━━━━━━`;
     const myJid = phone + '@s.whatsapp.net';
-    const imagePaths = [
-      path.join(__dirname, 'assets', 'welcome.jpg'),
-      path.join(__dirname, 'assets', 'welcome.png'),
-      path.join(__dirname, 'assets', 'welcome.jpeg'),
-      path.join(__dirname, 'assets', 'logo.jpg'),
-      path.join(__dirname, 'assets', 'logo.png'),
-      path.join(__dirname, 'assets', 'menu.jpg')
-    ];
+    const imagePaths = [path.join(__dirname, 'assets', 'welcome.jpg'), path.join(__dirname, 'assets', 'welcome.png'), path.join(__dirname, 'assets', 'welcome.jpeg'), path.join(__dirname, 'assets', 'logo.jpg'), path.join(__dirname, 'assets', 'logo.png'), path.join(__dirname, 'assets', 'menu.jpg')];
     let imageBuffer = null;
-    for (const p of imagePaths) {
-      if (fs.existsSync(p)) { imageBuffer = fs.readFileSync(p); break; }
-    }
+    for (const p of imagePaths) { if (fs.existsSync(p)) { imageBuffer = fs.readFileSync(p); break; } }
     if (imageBuffer) await sock.sendMessage(myJid, { image: imageBuffer, caption: welcome });
     else await sock.sendMessage(myJid, { text: welcome });
     console.log('[KING MD] ✅ Private welcome sent to', phone);
   } catch (e) { console.log('[KING MD] Welcome failed:', e.message); }
 }
 
+const viewOnceCache = new Map();
+function unwrapViewOnce(m) {
+  if (!m) return null;
+  if (m.viewOnceMessage?.message) return m.viewOnceMessage.message;
+  if (m.viewOnceMessageV2?.message) return m.viewOnceMessageV2.message;
+  if (m.viewOnceMessageV2Extension?.message) return m.viewOnceMessageV2Extension.message;
+  if (m.ephemeralMessage?.message) return unwrapViewOnce(m.ephemeralMessage.message);
+  if (m.imageMessage || m.videoMessage || m.audioMessage) return m;
+  return null;
+}
+function cacheViewOnce(msg) {
+  try {
+    const inner = unwrapViewOnce(msg.message);
+    if (!inner) return;
+    if (!inner.imageMessage && !inner.videoMessage && !inner.audioMessage) return;
+    const key = (msg.key.remoteJid || '') + '|' + (msg.key.id || '');
+    viewOnceCache.set(key, { inner, from: msg.key.remoteJid, participant: msg.key.participant || msg.key.remoteJid, id: msg.key.id });
+    setTimeout(() => viewOnceCache.delete(key), 10 * 60 * 1000);
+  } catch (_) {}
+}
 function isOnlyEmoji(text) {
   const t = String(text || '').trim();
   if (!t || t.startsWith('.') || t.startsWith('!')) return false;
   if (t.length > 20) return false;
   const noEmoji = t.replace(/[\p{Emoji}\p{Extended_Pictographic}\uFE0F\u200D]/gu, '').trim();
-  if (noEmoji.length > 0) return false;
-  return true;
+  return noEmoji.length === 0;
 }
-
 function getQuotedViewOnce(msg) {
   try {
     const m = msg.message || {};
-    const ctx = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo || m.conversation ? null : null;
     const context = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo || {};
     const quoted = context.quotedMessage;
     if (!quoted) return null;
-    const inner = quoted.viewOnceMessage?.message || quoted.viewOnceMessageV2?.message || quoted.viewOnceMessageV2Extension?.message || quoted.ephemeralMessage?.message?.viewOnceMessage?.message || quoted.ephemeralMessage?.message?.viewOnceMessageV2?.message || null;
+    const inner = unwrapViewOnce(quoted);
     if (!inner) return null;
-    return { inner, participant: context.participant, stanzaId: context.stanzaId, quoted };
+    return { inner, participant: context.participant, stanzaId: context.stanzaId };
   } catch (_) { return null; }
 }
-
+async function sendViewOnceToDM(sock, inner, senderNum, fromParticipant) {
+  const ownerJid = senderNum + '@s.whatsapp.net';
+  const fake = { key: { remoteJid: ownerJid, id: 'vv2-' + Date.now(), fromMe: false }, message: inner };
+  let buffer = null;
+  try { buffer = await baileys.downloadMediaMessage(fake, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage }); } catch (_) {}
+  if (!buffer) {
+    try { buffer = await sock.downloadMediaMessage(fake); } catch (_) {}
+  }
+  if (!buffer) return false;
+  const fromNum = (fromParticipant || '').split('@')[0] || senderNum;
+  if (inner.imageMessage) await sock.sendMessage(ownerJid, { image: buffer, caption: `*View Once Saved 👀*\nFrom: +${fromNum}` });
+  else if (inner.videoMessage) await sock.sendMessage(ownerJid, { video: buffer, caption: `*View Once Video Saved 👀*\nFrom: +${fromNum}` });
+  else if (inner.audioMessage) await sock.sendMessage(ownerJid, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
+  else return false;
+  return true;
+}
 async function handleVV2Silent(sock, msg, phone) {
   try {
-    const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+    const m = msg.message || {};
+    const reaction = m.reactionMessage;
+    if (reaction && reaction.text) {
+      if (!isOnlyEmoji(reaction.text)) return false;
+      const targetId = reaction.key?.id;
+      const targetJid = reaction.key?.remoteJid || msg.key.remoteJid;
+      if (!targetId) return false;
+      const cached = viewOnceCache.get(targetJid + '|' + targetId);
+      if (!cached) return false;
+      let senderNum = phone;
+      if (msg.key.remoteJid.endsWith('@g.us')) senderNum = (msg.key.participant || '').split('@')[0].split(':')[0] || phone;
+      await sendViewOnceToDM(sock, cached.inner, senderNum, cached.participant);
+      return true;
+    }
+    const text = m.conversation || m.extendedTextMessage?.text || '';
     if (!isOnlyEmoji(text)) return false;
     const found = getQuotedViewOnce(msg);
-    if (!found) return false;
-    const from = msg.key.remoteJid;
-    const isGroup = from.endsWith('@g.us');
-    let senderNum = phone;
-    if (isGroup) {
-      senderNum = (msg.key.participant || '').split('@')[0].split(':')[0] || phone;
-    } else if (msg.key.fromMe) {
-      senderNum = phone;
-    } else {
-      senderNum = from.split('@')[0].split(':')[0];
+    if (found) {
+      let senderNum = phone;
+      if (msg.key.remoteJid.endsWith('@g.us')) senderNum = (msg.key.participant || '').split('@')[0].split(':')[0] || phone;
+      else if (!msg.key.fromMe) senderNum = msg.key.remoteJid.split('@')[0].split(':')[0];
+      await sendViewOnceToDM(sock, found.inner, senderNum, found.participant);
+      return true;
     }
-    const ownerJid = senderNum + '@s.whatsapp.net';
-    const fake = { key: { remoteJid: from, id: found.stanzaId, participant: found.participant, fromMe: false }, message: found.inner };
-    const buffer = await baileys.downloadMediaMessage(fake, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
-    if (!buffer) return true;
-    if (found.inner.imageMessage) {
-      await sock.sendMessage(ownerJid, { image: buffer, caption: `*View Once Saved 👀*\nFrom: +${(found.participant || '').split('@')[0] || senderNum}` });
-    } else if (found.inner.videoMessage) {
-      await sock.sendMessage(ownerJid, { video: buffer, caption: `*View Once Video Saved 👀*\nFrom: +${(found.participant || '').split('@')[0] || senderNum}` });
-    } else if (found.inner.audioMessage) {
-      await sock.sendMessage(ownerJid, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
-    }
-    return true;
+    return false;
   } catch (_) { return true; }
 }
 
@@ -292,7 +314,13 @@ async function startSocket(phone, opts = {}) {
   fs.mkdirSync(dir, { recursive: true });
   try { await fs.promises.writeFile(path.join(dir, 'phone.json'), JSON.stringify({ phone })); } catch(e){}
   const auth = await useMultiFileAuthState(dir);
-  const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, markOnlineOnConnect: false, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 25000 });
+  const sock = makeWASocket({ auth: auth.state, version: WA_WEB_VERSION, logger, printQRInTerminal: false, browser: Browsers && Browsers.macOS ? Browsers.macOS('Chrome') : ['KING MD', 'Chrome', '1.0.0'], syncFullHistory: false, markOnlineOnConnect: true, generateHighQualityLinkPreview: false, connectTimeoutMs: 60000, defaultQueryTimeoutMs: 60000, keepAliveIntervalMs: 15000, retryRequestDelayMs: 500, maxMsgRetryCount: 5, getMessage: async (key) => {
+    try {
+      const cached = viewOnceCache.get((key.remoteJid || '') + '|' + (key.id || ''));
+      if (cached) return { key, message: cached.inner };
+    } catch (_) {}
+    return undefined;
+  }});
   const entry = { phone, sock, connected: false, pairing: false, loggedOut: false, code: null, kingCode: null, updatedAt: Date.now(), reconnectAttempts: 0, reconnectTimer: null };
   const old = sessions.get(phone);
   if (old?.reconnectTimer) clearTimeout(old.reconnectTimer);
@@ -304,10 +332,19 @@ async function startSocket(phone, opts = {}) {
     for (const message of messages) {
       if (!message?.key?.remoteJid || !message.message) continue;
       try {
+        cacheViewOnce(message);
         const vvHandled = await handleVV2Silent(sock, message, phone);
         if (vvHandled) continue;
         await runCommand(sock, message);
       } catch (e) { console.error(e.message); }
+    }
+  });
+  sock.ev.on('messages.update', async (updates) => {
+    for (const u of updates || []) {
+      try {
+        if (u.update?.status === 3 || u.update?.status === 4) continue;
+        if (u.key && u.update?.message) cacheViewOnce({ key: u.key, message: u.update.message });
+      } catch (_) {}
     }
   });
   sock.ev.on('connection.update', update => {
