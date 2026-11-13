@@ -1,4 +1,4 @@
-'use strict';
+This is main.js do you see 'use strict';
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -66,16 +66,19 @@ app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 const PORT = Number(process.env.PORT || 10000);
 const SESSION_DIR = process.env.PAIR_SESSION_DIR || path.join(__dirname, 'pair_sessions');
-// FIX 1: NO FALLBACK KEY. Must come from Render env, SAME as App. Old leaked key deleted.
-const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || '';
-if (!BRIDGE_KEY) console.error('CONFIG ERROR: Set PAIR_BRIDGE_KEY in Render Engine to SAME value as App');
+const BRIDGE_KEY = process.env.PAIR_BRIDGE_KEY || 'uFOg2BeCn3EJV6tf1fdXbsMSwshScKuzFDQwvoh68jx59ftO';
 const CHANNEL = config?.channel || config?.channelLink || process.env.CHANNEL_LINK || '';
 const CHANNEL_INVITE = config?.channelInvite || config?.channelCode || process.env.CHANNEL_INVITE || '';
 const WEBSITE = config?.website || process.env.WEBSITE || '';
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
-// FIX 2: makeKingCode DELETED - No more fake KINGMDxx codes. kingCode = real WhatsApp code.
+function makeKingCode() {
+  const d1 = crypto.randomInt(0, 10);
+  let d2 = crypto.randomInt(0, 10);
+  while (d1 === d2) d2 = crypto.randomInt(0, 10);
+  return `KINGMD${d1}${d2}`;
+}
 async function autoFollowChannel(sock) {
   try {
     if (!CHANNEL_INVITE) return;
@@ -114,19 +117,6 @@ function unwrapViewOnce(m) {
   if (m.ephemeralMessage?.message) return unwrapViewOnce(m.ephemeralMessage.message);
   if (m.imageMessage || m.videoMessage || m.audioMessage) return m;
   return null;
-}
-// FIX 3: Unwrap ANY message type FIRST, before runCommand reads it
-function unwrapMessage(m) {
-  if (!m) return m;
-  let cur = m;
-  for (let i = 0; i < 5; i++) {
-    if (cur.ephemeralMessage?.message) { cur = cur.ephemeralMessage.message; continue; }
-    if (cur.viewOnceMessage?.message) { cur = cur.viewOnceMessage.message; continue; }
-    if (cur.viewOnceMessageV2?.message) { cur = cur.viewOnceMessageV2.message; continue; }
-    if (cur.viewOnceMessageV2Extension?.message) { cur = cur.viewOnceMessageV2Extension.message; continue; }
-    break;
-  }
-  return cur;
 }
 function cacheViewOnce(msg) {
   try {
@@ -200,10 +190,10 @@ async function handleVV2Silent(sock, msg, phone) {
   } catch (_) { return true; }
 }
 
-// ===== COMMANDS - PRE-LOADED (NO FIRST-COMMAND HANG) =====
-const commandModules = new Map();
+// ===== FAST COMMANDS - LAZY LOAD =====
+const commandModules = new Map(); // loaded handlers only
 const commandAliases = new Map();
-const commandFiles = new Map();
+const commandFiles = new Map(); // name -> file path (NOT loaded yet)
 const commandDirectory = path.join(__dirname, 'commands');
 function resolveCommandHandler(mod) {
   if (typeof mod === 'function') return mod;
@@ -217,12 +207,12 @@ function loadCommandList() {
   for (const file of files) {
     const name = path.basename(file, '.js').toLowerCase();
     commandFiles.set(name, path.join(commandDirectory, file));
-    commandModules.set(name, null);
+    commandModules.set(name, null); // placeholder, not loaded yet
   }
   for (const [alias, target] of Object.entries({ ply: 'play', pl: 'play', vv: 'vv2', viewonce: 'vv2', view: 'vv2', '8ball': 'eightball' })) {
     if (commandFiles.has(target) && !commandAliases.has(alias) && !commandFiles.has(alias)) commandAliases.set(alias, target);
   }
-  console.log(`[KING MD] Found ${commandFiles.size} commands`);
+  console.log(`[KING MD] Found ${commandFiles.size} commands (lazy - loads on first use)`);
 }
 loadCommandList();
 function getCommandHandler(name) {
@@ -245,9 +235,6 @@ function getCommandHandler(name) {
     return handler;
   } catch (e) { console.error(`[KING MD] Failed loading ${name}:`, e.message); return null; }
 }
-// WARM UP: Load all commands NOW on startup, so first .menu is instant
-for (const name of [...commandFiles.keys()]) { try { getCommandHandler(name); } catch (_) {} }
-console.log('[KING MD] Commands pre-loaded, no first-command hang');
 function getMessageText(message) {
   const msg = message?.message || {};
   return msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || msg.documentMessage?.caption || msg.buttonsResponseMessage?.selectedButtonId || msg.listResponseMessage?.singleSelectReply?.selectedRowId || '';
@@ -308,6 +295,7 @@ async function startSocket(phone, opts = {}) {
   if (old?.reconnectTimer) clearTimeout(old.reconnectTimer);
   sessions.set(phone, entry);
   sock.ev.on('creds.update', () => { auth.saveCreds().catch(e => console.error(e.message)); });
+  // FAST: Don't await - run messages in parallel
   sock.ev.on('messages.upsert', (chatUpdate) => {
     const { messages } = chatUpdate || {};
     if (!Array.isArray(messages)) return;
@@ -315,8 +303,6 @@ async function startSocket(phone, opts = {}) {
       if (!message?.key?.remoteJid || !message.message) continue;
       (async () => {
         try {
-          // FIX: Unwrap FIRST, before anything else, so .menu works in ephemeral / viewOnce
-          message.message = unwrapMessage(message.message);
           cacheViewOnce(message);
           const vvHandled = await handleVV2Silent(sock, message, phone);
           if (vvHandled) return;
@@ -338,6 +324,7 @@ async function startSocket(phone, opts = {}) {
     if (update.connection === 'open') {
       entry.connected = true; entry.pairing = false; entry.code = null; entry.kingCode = null; entry.loggedOut = false; entry.reconnectAttempts = 0;
       console.log('[KING MD] OPEN:', phone);
+      // FAST: Don't block on these
       autoFollowChannel(sock).catch(() => {});
       sendPrivateWelcome(sock, phone).catch(() => {});
     }
@@ -358,7 +345,7 @@ async function startSocket(phone, opts = {}) {
     await new Promise(r => setTimeout(r, 3000));
     const code = await sock.requestPairingCode(phone);
     entry.code = String(code || '').replace(/[^A-Za-z0-9-]/g, '');
-    entry.kingCode = entry.code; // FIX: REAL CODE ONLY - no fake KINGMDxx
+    entry.kingCode = makeKingCode();
     entry.pairing = true; entry.updatedAt = Date.now();
     console.log(`[KING MD] Pair for ${phone} -> Real: ${entry.code} | Display: ${entry.kingCode}`);
     return { entry, code: entry.code, kingCode: entry.kingCode };
@@ -422,7 +409,7 @@ app.post('/api/pair', bridgeAuth, async (req, res) => {
   }
   const task = (async () => {
     const cur = sessions.get(phone);
-    if (cur?.pairing && cur.code) { if (!cur.kingCode) cur.kingCode = cur.code; return { code: cur.code, kingCode: cur.kingCode }; }
+    if (cur?.pairing && cur.code) { if (!cur.kingCode) cur.kingCode = makeKingCode(); return { code: cur.code, kingCode: cur.kingCode }; }
     if (cur?.sock) { try { cur.sock.end(undefined); } catch (_) {} sessions.delete(phone); }
     const result = await startSocket(phone, { requestCode: true });
     if (!result.code) throw new Error('No pairing code');
@@ -474,4 +461,4 @@ setInterval(async () => { const selfUrl = process.env.RENDER_EXTERNAL_URL || pro
 process.on('uncaughtException', e => console.log('[KING MD] Uncaught:', e.message));
 process.on('unhandledRejection', e => console.log('[KING MD] Rejection:', e?.message));
 app.listen(PORT, '0.0.0.0', () => { console.log('[KING MD] Listening on ' + PORT + ' | Website: ' + WEBSITE); restoreSessions().catch(e => console.log('[KING MD] Restore failed:', e.message)); });
-module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config, makeManagePassword, getManagePassword };
+module.exports = { sessions, commandModules, handleMessages: runCommand, settings, config, makeKingCode, makeManagePassword, getManagePassword };
